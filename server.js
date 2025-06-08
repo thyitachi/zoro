@@ -1,0 +1,534 @@
+const express = require('express');
+const axios = require('axios');
+const sqlite3 = require('sqlite3').verbose();
+const app = express();
+const port = 3000;
+
+const db = new sqlite3.Database('anime.db', (err) => {
+	if (err) console.error('Database error:', err.message);
+	else console.log('Connected to SQLite database.');
+});
+
+db.serialize(() => {
+	db.run(`CREATE TABLE IF NOT EXISTS watchlist (id TEXT PRIMARY KEY, name TEXT, thumbnail TEXT, status TEXT)`);
+	db.run(`CREATE TABLE IF NOT EXISTS watched_episodes (showId TEXT, episodeNumber TEXT, watchedAt DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (showId, episodeNumber))`);
+	db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+	db.run(`CREATE TABLE IF NOT EXISTS shows_meta (id TEXT PRIMARY KEY, name TEXT, thumbnail TEXT)`);
+});
+
+app.use(express.json());
+app.use(express.static('public'));
+
+const apiBaseUrl = 'https://allanime.day';
+const apiEndpoint = `https://api.allanime.day/api`;
+const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0';
+const referer = 'https://allmanga.to';
+
+const showsQuery = `query ($search: SearchInput, $limit: Int, $page: Int, $translationType: VaildTranslationTypeEnumType, $countryOrigin: VaildCountryOriginEnumType) { shows(search: $search, limit: $limit, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) { edges { _id, name, thumbnail, description, availableEpisodesDetail } } }`;
+
+async function fetchAndSendShows(res, variables) {
+	try {
+		const response = await axios.get(apiEndpoint, {
+			headers: {
+				'User-Agent': userAgent,
+				'Referer': referer
+			},
+			params: {
+				query: showsQuery,
+				variables: JSON.stringify(variables)
+			},
+			timeout: 15000
+		});
+		const shows = response.data?.data?.shows?.edges || [];
+		res.json(shows);
+	} catch (error) {
+		res.status(500).send('Error fetching data');
+	}
+}
+
+app.get('/popular', (req, res) => {
+	const variables = {
+		search: {
+			sortBy: "Popular",
+			allowAdult: false
+		},
+		limit: 10,
+		page: 1,
+		translationType: "sub",
+		countryOrigin: "ALL"
+	};
+	fetchAndSendShows(res, variables);
+});
+
+app.get('/latest-releases', (req, res) => {
+	const variables = {
+		search: {
+			sortBy: "Recent",
+			allowAdult: false
+		},
+		limit: 15,
+		page: 1,
+		translationType: "sub",
+		countryOrigin: "ALL"
+	};
+	fetchAndSendShows(res, variables);
+});
+
+function getCurrentAnimeSeason() {
+	const month = new Date().getMonth();
+	if (month >= 0 && month <= 2) return "Winter";
+	if (month >= 3 && month <= 5) return "Spring";
+	if (month >= 6 && month <= 8) return "Summer";
+	return "Fall";
+}
+
+app.get('/seasonal', (req, res) => {
+	const season = getCurrentAnimeSeason();
+	const year = new Date().getFullYear();
+	const variables = {
+		search: {
+			year,
+			season,
+			sortBy: "Popular",
+			allowAdult: false
+		},
+		limit: 20,
+		page: 1,
+		translationType: "sub",
+		countryOrigin: "ALL"
+	};
+	fetchAndSendShows(res, variables);
+});
+
+app.get('/search', (req, res) => {
+	const {
+		query,
+		season,
+		year,
+		sortBy,
+		page
+	} = req.query;
+	const searchObj = {
+		allowAdult: false
+	};
+	if (query) searchObj.query = query;
+	if (season && season !== 'ALL') searchObj.season = season;
+	if (year && year !== 'ALL') searchObj.year = parseInt(year);
+	if (sortBy) searchObj.sortBy = sortBy;
+	const variables = {
+		search: searchObj,
+		limit: 28,
+		page: parseInt(page) || 1,
+		translationType: "sub",
+		countryOrigin: "ALL"
+	};
+	fetchAndSendShows(res, variables);
+});
+
+app.get('/episodes', async (req, res) => {
+	const {
+		showId,
+		mode = 'sub'
+	} = req.query;
+	try {
+		const response = await axios.get(apiEndpoint, {
+			headers: {
+				'User-Agent': userAgent,
+				'Referer': referer
+			},
+			params: {
+				query: `query($showId: String!) { show(_id: $showId) { availableEpisodesDetail, description } }`,
+				variables: JSON.stringify({
+					showId
+				})
+			},
+			timeout: 15000
+		});
+		const showData = response.data.data.show;
+		res.json({
+			episodes: showData.availableEpisodesDetail[mode] || [],
+			description: showData.description
+		});
+	} catch (error) {
+		res.status(500).send('Error fetching episodes from API');
+	}
+});
+
+app.get('/video', async (req, res) => {
+	const {
+		showId,
+		episodeNumber,
+		mode = 'sub'
+	} = req.query;
+	const graphqlQuery = `query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) { sourceUrls } }`;
+	try {
+		const {
+			data
+		} = await axios.get(apiEndpoint, {
+			headers: {
+				'User-Agent': userAgent,
+				'Referer': referer
+			},
+			params: {
+				query: graphqlQuery,
+				variables: JSON.stringify({
+					showId,
+					translationType: mode,
+					episodeString: episodeNumber
+				})
+			},
+			timeout: 15000
+		});
+		const sources = data.data.episode.sourceUrls.filter(s => s.sourceUrl.startsWith('--')).sort((a, b) => b.priority - a.priority);
+		const availableSources = [];
+		for (const source of sources) {
+			try {
+				let decryptedUrl = "PLACEHOLDER_DECRYPT_FUNCTION";
+				decryptedUrl = (s => {
+					const m = {
+						'79': 'A',
+						'7a': 'B',
+						'7b': 'C',
+						'7c': 'D',
+						'7d': 'E',
+						'7e': 'F',
+						'7f': 'G',
+						'70': 'H',
+						'71': 'I',
+						'72': 'J',
+						'73': 'K',
+						'74': 'L',
+						'75': 'M',
+						'76': 'N',
+						'77': 'O',
+						'68': 'P',
+						'69': 'Q',
+						'6a': 'R',
+						'6b': 'S',
+						'6c': 'T',
+						'6d': 'U',
+						'6e': 'V',
+						'6f': 'W',
+						'60': 'X',
+						'61': 'Y',
+						'62': 'Z',
+						'59': 'a',
+						'5a': 'b',
+						'5b': 'c',
+						'5c': 'd',
+						'5d': 'e',
+						'5e': 'f',
+						'5f': 'g',
+						'50': 'h',
+						'51': 'i',
+						'52': 'j',
+						'53': 'k',
+						'54': 'l',
+						'55': 'm',
+						'56': 'n',
+						'57': 'o',
+						'48': 'p',
+						'49': 'q',
+						'4a': 'r',
+						'4b': 's',
+						'4c': 't',
+						'4d': 'u',
+						'4e': 'v',
+						'4f': 'w',
+						'40': 'x',
+						'41': 'y',
+						'42': 'z',
+						'08': '0',
+						'09': '1',
+						'0a': '2',
+						'0b': '3',
+						'0c': '4',
+						'0d': '5',
+						'0e': '6',
+						'0f': '7',
+						'00': '8',
+						'01': '9',
+						'15': '-',
+						'16': '.',
+						'67': '_',
+						'46': '~',
+						'02': ':',
+						'17': '/',
+						'07': '?',
+						'1b': '#',
+						'63': '[',
+						'65': ']',
+						'78': '@',
+						'19': '!',
+						'1c': '$',
+						'1e': '&',
+						'10': '(',
+						'11': ')',
+						'12': '*',
+						'13': '+',
+						'14': ',',
+						'03': ';',
+						'05': '=',
+						'1d': '%'
+					};
+					let d = '';
+					for (let i = 0; i < s.length; i += 2) d += m[s.substring(i, i + 2)] || s.substring(i, i + 2);
+					return d.includes('/clock') && !d.includes('.json') ? d.replace('/clock', '/clock.json') : d;
+				})(source.sourceUrl.substring(2)).replace(/([^:]\/)\/+/g, "$1");
+				let videoLinks = [];
+				let subtitles = [];
+				if (decryptedUrl.includes('/clock.json')) {
+					const finalUrl = new URL(decryptedUrl, apiBaseUrl).href;
+					const {
+						data: clockData
+					} = await axios.get(finalUrl, {
+						headers: {
+							'Referer': referer,
+							'User-Agent': userAgent
+						},
+						timeout: 10000
+					});
+					if (clockData.links && clockData.links.length > 0) {
+						videoLinks = clockData.links[0].hls ? await (async (u, h) => {
+							try {
+								const {
+									data: d
+								} = await axios.get(u, {
+									headers: h,
+									timeout: 10000
+								});
+								const l = d.split('\n'),
+									q = [];
+								for (let i = 0; i < l.length; i++)
+									if (l[i].startsWith('#EXT-X-STREAM-INF')) {
+										const rM = l[i].match(/RESOLUTION=\d+x(\d+)/);
+										q.push({
+											resolutionStr: rM ? `${rM[1]}p` : 'Auto',
+											link: new URL(l[i + 1], u).href,
+											hls: true,
+											headers: h
+										});
+									} return q.length > 0 ? q : [{
+									resolutionStr: 'auto',
+									link: u,
+									hls: true,
+									headers: h
+								}];
+							} catch (e) {
+								return [];
+							}
+						})(clockData.links[0].link, clockData.links[0].headers) : clockData.links;
+						subtitles = clockData.links[0].subtitles || [];
+					}
+				} else {
+					videoLinks.push({
+						link: decryptedUrl,
+						resolutionStr: 'default',
+						hls: decryptedUrl.includes('.m3u8'),
+						headers: {
+							Referer: referer
+						}
+					});
+				}
+				if (videoLinks.length > 0) {
+					availableSources.push({
+						sourceName: source.sourceName,
+						links: videoLinks,
+						subtitles
+					});
+				}
+			} catch (e) {}
+		}
+		if (availableSources.length > 0) res.json(availableSources);
+		else res.status(404).send('No playable video URLs found.');
+	} catch (e) {
+		res.status(500).send(`Error fetching video data: ${e.message}`);
+	}
+});
+
+app.get('/image-proxy', async (req, res) => {
+	try {
+		const {
+			data
+		} = await axios({
+			method: 'get',
+			url: req.query.url,
+			responseType: 'stream',
+			headers: {
+				Referer: apiBaseUrl,
+				'User-Agent': userAgent
+			},
+			timeout: 10000
+		});
+		data.pipe(res);
+	} catch (e) {
+		res.sendFile(__dirname + '/public/placeholder.png');
+	}
+});
+app.get('/proxy', async (req, res) => {
+	const {
+		url,
+		referer: dynamicReferer
+	} = req.query;
+	try {
+		const headers = {
+			'User-Agent': userAgent,
+			'Accept': '*/*'
+		};
+		if (dynamicReferer) headers['Referer'] = dynamicReferer;
+		if (url.includes('.m3u8')) {
+			const response = await axios.get(url, {
+				headers,
+				responseType: 'text',
+				timeout: 15000
+			});
+			const baseUrl = new URL(url);
+			const rewritten = response.data.split('\n').map(l => (l.trim().length > 0 && !l.startsWith('#')) ? `/proxy?url=${encodeURIComponent(new URL(l, baseUrl).href)}&referer=${encodeURIComponent(dynamicReferer || referer)}` : l).join('\n');
+			res.set('Content-Type', 'application/vnd.apple.mpegurl').send(rewritten);
+		} else {
+			const streamResponse = await axios({
+				method: 'get',
+				url,
+				responseType: 'stream',
+				headers,
+				timeout: 20000
+			});
+			res.set(streamResponse.headers);
+			streamResponse.data.pipe(res);
+		}
+	} catch (e) {
+		res.status(500).send(`Proxy error: ${e.message}`);
+	}
+});
+app.get('/subtitle-proxy', async (req, res) => {
+	const {
+		url
+	} = req.query;
+	try {
+		const response = await axios.get(url, {
+			responseType: 'text',
+			timeout: 10000
+		});
+		res.set('Content-Type', 'text/vtt; charset=utf-8');
+		res.send(response.data);
+	} catch (error) {
+		res.status(500).send(`Proxy error: ${error.message}`);
+	}
+});
+app.post('/watchlist/add', (req, res) => {
+	const {
+		id,
+		name,
+		thumbnail,
+		status
+	} = req.body;
+	db.run(`INSERT OR REPLACE INTO watchlist (id, name, thumbnail, status) VALUES (?, ?, ?, ?)`, [id, name, thumbnail, status || 'Watching'], (err) => err ? res.status(500).send('DB error') : res.json({
+		success: true
+	}));
+});
+app.get('/watchlist/check/:showId', (req, res) => {
+	db.get('SELECT EXISTS(SELECT 1 FROM watchlist WHERE id = ?) as inWatchlist', [req.params.showId], (err, row) => err ? res.status(500).send('DB error') : res.json({
+		inWatchlist: !!row.inWatchlist
+	}));
+});
+app.post('/watchlist/status', (req, res) => {
+	const {
+		id,
+		status
+	} = req.body;
+	db.run(`UPDATE watchlist SET status = ? WHERE id = ?`, [status, id], (err) => err ? res.status(500).json({
+		error: 'DB error'
+	}) : res.json({
+		success: true
+	}));
+});
+app.get('/watchlist', (req, res) => {
+	db.all(`SELECT * FROM watchlist`, [], (err, rows) => err ? res.status(500).send('DB error') : res.json(rows));
+});
+app.post('/watchlist/remove', (req, res) => {
+	db.run(`DELETE FROM watchlist WHERE id = ?`, [req.body.id], (err) => err ? res.status(500).send('DB error') : res.json({
+		success: true
+	}));
+});
+app.post('/watched-episode', (req, res) => {
+	const {
+		showId,
+		episodeNumber,
+		showName,
+		showThumbnail
+	} = req.body;
+	db.serialize(() => {
+		db.run('INSERT OR IGNORE INTO shows_meta (id, name, thumbnail) VALUES (?, ?, ?)', [showId, showName, showThumbnail]);
+		db.run(`INSERT OR REPLACE INTO watched_episodes (showId, episodeNumber, watchedAt) VALUES (?, ?, CURRENT_TIMESTAMP)`, [showId, episodeNumber], (err) => err ? res.status(500).send('DB error') : res.json({
+			success: true
+		}));
+	});
+});
+app.get('/watched-episodes/:showId', (req, res) => {
+	db.all(`SELECT episodeNumber FROM watched_episodes WHERE showId = ?`, [req.params.showId], (err, rows) => err ? res.status(500).send('DB error') : res.json(rows.map(r => r.episodeNumber)));
+});
+app.get('/continue-watching', (req, res) => {
+	const query = `SELECT sm.id, sm.name, sm.thumbnail, (SELECT we.episodeNumber FROM watched_episodes we WHERE we.showId = sm.id ORDER BY CAST(we.episodeNumber AS REAL) DESC, we.watchedAt DESC LIMIT 1) as lastWatchedEpisode FROM shows_meta sm JOIN (SELECT showId, MAX(watchedAt) as maxWatchedAt FROM watched_episodes GROUP BY showId) as latest_watches ON sm.id = latest_watches.showId ORDER BY latest_watches.maxWatchedAt DESC LIMIT 10;`;
+	db.all(query, [], async (err, rows) => {
+		if (err) return res.status(500).send('DB error');
+		try {
+			const results = await Promise.all(rows.map(async (show) => {
+				if (!show.lastWatchedEpisode) return null;
+				const epResponse = await axios.get(apiEndpoint, {
+					headers: {
+						'User-Agent': userAgent,
+						'Referer': referer
+					},
+					params: {
+						query: `query($showId: String!) { show(_id: $showId) { availableEpisodesDetail } }`,
+						variables: JSON.stringify({
+							showId: show.id
+						})
+					},
+					timeout: 10000
+				});
+				const allEps = epResponse.data.data.show.availableEpisodesDetail.sub?.sort((a, b) => parseFloat(a) - parseFloat(b)) || [];
+				const lastWatchedIndex = allEps.indexOf(show.lastWatchedEpisode);
+				if (lastWatchedIndex > -1 && lastWatchedIndex < allEps.length - 1) {
+					return {
+						showId: show.id,
+						name: show.name,
+						thumbnail: show.thumbnail,
+						nextEpisodeNumber: allEps[lastWatchedIndex + 1],
+						availableEpisodesDetail: epResponse.data.data.show.availableEpisodesDetail
+					};
+				}
+				return null;
+			}));
+			res.json(results.filter(Boolean));
+		} catch (apiError) {
+			res.status(500).send('API error');
+		}
+	});
+});
+app.get('/settings/:key', (req, res) => {
+	db.get('SELECT value FROM settings WHERE key = ?', [req.params.key], (err, row) => {
+		if (err) return res.status(500).json({
+			error: 'DB error'
+		});
+		res.json({
+			value: row ? row.value : null
+		});
+	});
+});
+app.post('/settings', (req, res) => {
+	const {
+		key,
+		value
+	} = req.body;
+	db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value], (err) => {
+		if (err) return res.status(500).json({
+			error: 'DB error'
+		});
+		res.json({
+			success: true
+		});
+	});
+});
+
+app.listen(port, () => console.log(`Server running at http://localhost:${port}`));

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+   <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Anime Streamer</title>
+      <link rel="stylesheet" href="styles.css">
+      <link rel="icon" href="favicon.ico" type="image/x-icon">
+      <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.5/dist/hls.min.js"></script>
+   </head>
+   <body>
+      <div class="app-container">
+         <nav>
+            <a href="#" onclick="showPage('home')">Home</a>
+            <a href="#" onclick="showPage('search')">Search</a>
+            <a href="#" onclick="showPage('watchlist')">Watchlist</a>
+         </nav>
+         <main>
+            <div id="home-page" class="page">
+               <div class="home-container">
+                  <div class="main-content">
+                     <div class="section" style="display: none;">
+                        <h2>Continue Watching</h2>
+                        <div id="continue-watching" class="grid"></div>
+                     </div>
+                     <div class="section">
+                        <h2 id="seasonal-title">Current Season</h2>
+                        <div id="seasonal-anime" class="grid"></div>
+                     </div>
+                     <div class="section">
+                        <h2>Latest Releases</h2>
+                        <div id="latest-releases" class="grid"></div>
+                     </div>
+                  </div>
+                  <aside class="sidebar">
+                     <h2>Top 10 Popular</h2>
+                     <div id="top-10-popular" class="top-10-list"></div>
+                  </aside>
+               </div>
+            </div>
+            <div id="search-page" class="page" style="display: none;">
+               <div class="search-filters">
+                  <input type="text" id="searchInput" placeholder="Search for an anime...">
+                  <select id="seasonFilter"></select>
+                  <select id="yearFilter"></select>
+                  <select id="sortFilter">
+                     <option value="Popular">Popularity</option>
+                     <option value="Recent">Recent</option>
+                  </select>
+               </div>
+               <div id="results" class="grid"></div>
+            </div>
+            <div id="watchlist-page" class="page" style="display: none;">
+               <div class="section">
+                  <h2>My Watchlist</h2>
+                  <div id="watchlist" class="grid"></div>
+               </div>
+            </div>
+            <div id="player-page" class="page" style="display: none;">
+            </div>
+         </main>
+         <footer>
+            <p>© 2025 <a href="https://github.com/serifpersia/ani-web" target="_blank" rel="noopener noreferrer">serifpersia</a></p>
+         </footer>
+      </div>
+      <script src="script.js"></script>
+   </body>
+</html>
