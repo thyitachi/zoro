@@ -32,11 +32,11 @@
       "dest": "/public/placeholder.png"
     },
     {
-      "src": "/api/(.*)",
+      "src": "/api/([^/]+)(?:/([^/]+))?(?:/([^/]+))?(?:/(.*))?$",
       "dest": "/server.js"
     },
     {
-      "src": "/popular/(.*)",
+      "src": "/popular/([^/]+)(?:/([^/]+))?$",
       "dest": "/server.js"
     },
     {
@@ -48,23 +48,23 @@
       "dest": "/server.js"
     },
     {
-      "src": "/episodes/(.*)",
+      "src": "/episodes/([^/]+)(?:/([^/]+))?$",
       "dest": "/server.js"
     },
     {
-      "src": "/video/(.*)",
+      "src": "/video/([^/]+)(?:/([^/]+))?$",
       "dest": "/server.js"
     },
     {
-      "src": "/download/(.*)",
+      "src": "/download/([^/]+)(?:/([^/]+))?$",
       "dest": "/server.js"
     },
     {
-      "src": "/watchlist/(.*)",
+      "src": "/watchlist/([^/]+)(?:/([^/]+))?$",
       "dest": "/server.js"
     },
     {
-      "src": "/settings/(.*)",
+      "src": "/settings/([^/]+)(?:/([^/]+))?$",
       "dest": "/server.js"
     },
     {
