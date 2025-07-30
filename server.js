@@ -10,16 +10,12 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 const apiCache = new NodeCache({ stdTTL: 3600 });
-// Use /tmp directory for SQLite in Vercel serverless environment
-const dbPath = process.env.NODE_ENV === 'production' 
-  ? path.join('/tmp', 'anime.db')
-  : path.join(__dirname, 'anime.db');
+// Use local directory for SQLite database
+const dbPath = path.join(__dirname, 'anime.db');
 let db;
 
-// Use appropriate directory for profile pictures in production
-const profilePicsDir = process.env.NODE_ENV === 'production'
-    ? path.join('/tmp', 'profile_pics')
-    : path.join(__dirname, 'public', 'profile_pics');
+// Use local directory for profile pictures
+const profilePicsDir = path.join(__dirname, 'public', 'profile_pics');
 
 if (!fs.existsSync(profilePicsDir)) {
     fs.mkdirSync(profilePicsDir, { recursive: true });
@@ -64,8 +60,8 @@ const profilePicUpload = multer({ storage: profilePicStorage });
 
 const dbUploadStorage = multer.diskStorage({
    destination: function (req, file, cb) {
-      // Use appropriate directory for database uploads in production
-      const uploadDir = process.env.NODE_ENV === 'production' ? '/tmp' : __dirname;
+      // Use local directory for database uploads
+      const uploadDir = __dirname;
       cb(null, uploadDir);
    },
    filename: function (req, file, cb) {
@@ -80,9 +76,8 @@ app.get('/favicon.ico', (req, res) => res.status(204).send());
 
 // Add root route handler to serve index.html
 app.get('/', (req, res) => {
-  // In Vercel serverless environment, __dirname might not work as expected
-  // Use process.cwd() as a fallback
-  const rootDir = process.env.NODE_ENV === 'production' ? process.cwd() : __dirname;
+  // Set the root directory for serving static files
+  const rootDir = __dirname;
   res.sendFile(path.join(rootDir, 'public', 'index.html'));
 });
 const apiBaseUrl = 'https://allanime.day';
@@ -411,10 +406,8 @@ app.get('/image-proxy', async (req, res) => {
         res.set('Content-Type', headers['content-type']);
         data.pipe(res);
     } catch (e) {
-        // Use appropriate path for placeholder image in production
-        const placeholderPath = process.env.NODE_ENV === 'production'
-            ? path.join(process.cwd(), 'public', 'placeholder.png')
-            : path.join(__dirname, 'public', 'placeholder.png');
+        // Use local path for placeholder image
+        const placeholderPath = path.join(__dirname, 'public', 'placeholder.png');
         res.status(500).sendFile(placeholderPath);
     }
 });
@@ -613,31 +606,8 @@ app.post('/api/profiles/:id/picture', profilePicUpload.single('profilePic'), (re
     
     // Handle profile picture path differently in production
     let picturePath;
-    if (process.env.NODE_ENV === 'production') {
-        // In production, we're storing in /tmp but need to reference from public path
-        // Store just the filename in the database
-        picturePath = `/profile_pics/${req.file.filename}`;
-        
-        // Copy the file to the public directory if we're in production
-        // This ensures the file is accessible via the web server
-        const publicDir = path.join(process.cwd(), 'public', 'profile_pics');
-        if (!fs.existsSync(publicDir)) {
-            fs.mkdirSync(publicDir, { recursive: true });
-        }
-        
-        try {
-            fs.copyFileSync(
-                path.join(profilePicsDir, req.file.filename),
-                path.join(publicDir, req.file.filename)
-            );
-        } catch (err) {
-            console.error('Error copying profile picture to public directory:', err);
-            // Continue anyway as the file is still in /tmp
-        }
-    } else {
-        // In development, the file is already in the right place
-        picturePath = `/profile_pics/${req.file.filename}`;
-    }
+    // The file is already in the right place in the public directory
+    picturePath = `/profile_pics/${req.file.filename}`;
     
     db.run('UPDATE profiles SET picture_path = ? WHERE id = ?', [picturePath, profileId], function (err) {
         if (err) return res.status(500).json({ error: 'Failed to update profile picture in DB.' });
@@ -953,10 +923,8 @@ app.post('/restore-db', dbUpload.single('dbfile'), (req, res) => {
    if (!req.file) {
       return res.status(400).json({ error: 'No database file uploaded.' });
    }
-   // Use appropriate path for temporary database in production
-   const tempPath = process.env.NODE_ENV === 'production'
-      ? path.join('/tmp', 'anime.db.temp')
-      : path.join(__dirname, 'anime.db.temp');
+   // Use local path for temporary database
+   const tempPath = path.join(__dirname, 'anime.db.temp');
    db.close((err) => {
       if (err) {
          console.error('Failed to close database for restore:', err.message);
@@ -1062,9 +1030,8 @@ app.get('*', (req, res) => {
     return res.status(404).send('Not found');
   }
   
-  // In Vercel serverless environment, __dirname might not work as expected
-  // Use process.cwd() as a fallback
-  const rootDir = process.env.NODE_ENV === 'production' ? process.cwd() : __dirname;
+  // Set the root directory for serving static files
+  const rootDir = __dirname;
   res.sendFile(path.join(rootDir, 'public', 'index.html'));
 });
 
