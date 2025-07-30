@@ -80,7 +80,10 @@ app.get('/favicon.ico', (req, res) => res.status(204).send());
 
 // Add root route handler to serve index.html
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  // In Vercel serverless environment, __dirname might not work as expected
+  // Use process.cwd() as a fallback
+  const rootDir = process.env.NODE_ENV === 'production' ? process.cwd() : __dirname;
+  res.sendFile(path.join(rootDir, 'public', 'index.html'));
 });
 const apiBaseUrl = 'https://allanime.day';
 const apiEndpoint = `https://api.allanime.day/api`;
@@ -1058,7 +1061,11 @@ app.get('*', (req, res) => {
       req.path.startsWith('/episodes/')) {
     return res.status(404).send('Not found');
   }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  
+  // In Vercel serverless environment, __dirname might not work as expected
+  // Use process.cwd() as a fallback
+  const rootDir = process.env.NODE_ENV === 'production' ? process.cwd() : __dirname;
+  res.sendFile(path.join(rootDir, 'public', 'index.html'));
 });
 
 app.listen(port, () => {
