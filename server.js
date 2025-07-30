@@ -1036,10 +1036,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(port, () => {
-  const environment = process.env.NODE_ENV || 'development';
-  if (environment === 'development') {
-    console.log(`Server running at http://localhost:${port}`);
-  } else {
-    console.log(`Server running in ${environment} mode on port ${port}`);
-  }
+  console.log(`Server running in ${process.env.NODE_ENV} mode on port ${port}`);
 });
