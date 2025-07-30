@@ -1051,6 +1051,13 @@ app.get('/api/download-video', async (req, res) => {
 
 // Add catch-all route to handle client-side routing
 app.get('*', (req, res) => {
+  // Exclude API routes and other specific routes from catch-all
+  if (req.path.startsWith('/api/') || 
+      req.path.startsWith('/video/') || 
+      req.path.startsWith('/download/') || 
+      req.path.startsWith('/episodes/')) {
+    return res.status(404).send('Not found');
+  }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

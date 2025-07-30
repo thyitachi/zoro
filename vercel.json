@@ -13,7 +13,7 @@
   "routes": [
     {
       "src": "/favicon.ico",
-      "dest": "/server.js"
+      "dest": "/public/favicon.ico"
     },
     {
       "src": "/styles.css",
@@ -30,6 +30,42 @@
     {
       "src": "/placeholder.png",
       "dest": "/public/placeholder.png"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/popular/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/latest-releases",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/search",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/episodes/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/video/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/download/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/watchlist/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/settings/(.*)",
+      "dest": "/server.js"
     },
     {
       "src": "/(.*)",
