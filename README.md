@@ -19,14 +19,6 @@ npm start
 
 The application will be available at http://localhost:3000.
 
-## Deployment to Render.com
+## Deployment
 
-This application is configured for easy deployment to Render.com:
-
-1. Create a Render.com account and link it to your GitHub repository
-2. In the Render dashboard, click "New" and select "Blueprint"
-3. Select your repository containing this application
-4. Render will automatically detect the `render.yaml` configuration file
-5. Click "Apply" to deploy the application
-
-The application will be deployed and available at the URL provided by Render.
+This application can be deployed to any Node.js hosting service of your choice.
