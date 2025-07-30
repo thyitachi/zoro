@@ -77,6 +77,11 @@ const dbUpload = multer({ storage: dbUploadStorage });
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 app.get('/favicon.ico', (req, res) => res.status(204).send());
+
+// Add root route handler to serve index.html
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 const apiBaseUrl = 'https://allanime.day';
 const apiEndpoint = `https://api.allanime.day/api`;
 const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0';
@@ -1042,6 +1047,11 @@ app.get('/api/download-video', async (req, res) => {
             res.status(500).send(`Download failed: ${error.message}`);
         }
     }
+});
+
+// Add catch-all route to handle client-side routing
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(port, () => {
