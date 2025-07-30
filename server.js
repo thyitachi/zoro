@@ -8,12 +8,19 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 const apiCache = new NodeCache({ stdTTL: 3600 });
-const dbPath = path.join(__dirname, 'anime.db');
+// Use /tmp directory for SQLite in Vercel serverless environment
+const dbPath = process.env.NODE_ENV === 'production' 
+  ? path.join('/tmp', 'anime.db')
+  : path.join(__dirname, 'anime.db');
 let db;
 
-const profilePicsDir = path.join(__dirname, 'public', 'profile_pics');
+// Use appropriate directory for profile pictures in production
+const profilePicsDir = process.env.NODE_ENV === 'production'
+    ? path.join('/tmp', 'profile_pics')
+    : path.join(__dirname, 'public', 'profile_pics');
+
 if (!fs.existsSync(profilePicsDir)) {
     fs.mkdirSync(profilePicsDir, { recursive: true });
 }
@@ -57,7 +64,9 @@ const profilePicUpload = multer({ storage: profilePicStorage });
 
 const dbUploadStorage = multer.diskStorage({
    destination: function (req, file, cb) {
-      cb(null, __dirname);
+      // Use appropriate directory for database uploads in production
+      const uploadDir = process.env.NODE_ENV === 'production' ? '/tmp' : __dirname;
+      cb(null, uploadDir);
    },
    filename: function (req, file, cb) {
       cb(null, 'anime.db.temp');
@@ -394,7 +403,11 @@ app.get('/image-proxy', async (req, res) => {
         res.set('Content-Type', headers['content-type']);
         data.pipe(res);
     } catch (e) {
-        res.status(500).sendFile(path.join(__dirname, '/public/placeholder.png'));
+        // Use appropriate path for placeholder image in production
+        const placeholderPath = process.env.NODE_ENV === 'production'
+            ? path.join(process.cwd(), 'public', 'placeholder.png')
+            : path.join(__dirname, 'public', 'placeholder.png');
+        res.status(500).sendFile(placeholderPath);
     }
 });
 
@@ -589,7 +602,35 @@ app.post('/api/profiles/:id/picture', profilePicUpload.single('profilePic'), (re
     if (!req.file) {
         return res.status(400).json({ error: 'No picture uploaded.' });
     }
-    const picturePath = `/profile_pics/${req.file.filename}`;
+    
+    // Handle profile picture path differently in production
+    let picturePath;
+    if (process.env.NODE_ENV === 'production') {
+        // In production, we're storing in /tmp but need to reference from public path
+        // Store just the filename in the database
+        picturePath = `/profile_pics/${req.file.filename}`;
+        
+        // Copy the file to the public directory if we're in production
+        // This ensures the file is accessible via the web server
+        const publicDir = path.join(process.cwd(), 'public', 'profile_pics');
+        if (!fs.existsSync(publicDir)) {
+            fs.mkdirSync(publicDir, { recursive: true });
+        }
+        
+        try {
+            fs.copyFileSync(
+                path.join(profilePicsDir, req.file.filename),
+                path.join(publicDir, req.file.filename)
+            );
+        } catch (err) {
+            console.error('Error copying profile picture to public directory:', err);
+            // Continue anyway as the file is still in /tmp
+        }
+    } else {
+        // In development, the file is already in the right place
+        picturePath = `/profile_pics/${req.file.filename}`;
+    }
+    
     db.run('UPDATE profiles SET picture_path = ? WHERE id = ?', [picturePath, profileId], function (err) {
         if (err) return res.status(500).json({ error: 'Failed to update profile picture in DB.' });
         res.json({ success: true, path: picturePath });
@@ -904,7 +945,10 @@ app.post('/restore-db', dbUpload.single('dbfile'), (req, res) => {
    if (!req.file) {
       return res.status(400).json({ error: 'No database file uploaded.' });
    }
-   const tempPath = path.join(__dirname, 'anime.db.temp');
+   // Use appropriate path for temporary database in production
+   const tempPath = process.env.NODE_ENV === 'production'
+      ? path.join('/tmp', 'anime.db.temp')
+      : path.join(__dirname, 'anime.db.temp');
    db.close((err) => {
       if (err) {
          console.error('Failed to close database for restore:', err.message);
@@ -921,4 +965,90 @@ app.post('/restore-db', dbUpload.single('dbfile'), (req, res) => {
       });
    });
 });
-app.listen(port, () => console.log(`Server running at http://localhost:${port}`));
+// API endpoint for direct video downloads
+app.get('/api/download-video', async (req, res) => {
+    const { url, referer, filename } = req.query;
+    
+    console.log('Download request received:');
+    console.log('- URL:', url ? 'Present' : 'Missing');
+    console.log('- Referer:', referer ? 'Present' : 'Missing');
+    console.log('- Filename:', filename || 'Not provided');
+    console.log('- Raw query string:', req.url.split('?')[1] || 'None');
+    console.log('- All query parameters:', JSON.stringify(req.query));
+    
+    if (!url) {
+        return res.status(400).send('URL parameter is required');
+    }
+    
+    try {
+        // Process the filename
+        let downloadFilename = filename || 'video.mp4';
+        
+        // Ensure filename has .mp4 extension
+        if (!downloadFilename.toLowerCase().endsWith('.mp4')) {
+            downloadFilename += '.mp4';
+        }
+        
+        // Force a simple ASCII filename for maximum compatibility
+        const safeFilename = downloadFilename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        console.log('Using safe filename:', safeFilename);
+        
+        // Set appropriate headers for the request
+        const headers = { 
+            'User-Agent': userAgent,
+            'Accept': '*/*',
+            'Connection': 'keep-alive'
+        };
+        
+        if (referer) {
+            headers['Referer'] = referer;
+        }
+        
+        // Set download headers
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+        
+        // Create a direct proxy to the video
+        const videoRequest = await axios({
+            method: 'get',
+            url: url,
+            responseType: 'stream',
+            headers: headers,
+            timeout: 30000, // Longer timeout for video download
+            maxRedirects: 5
+        });
+        
+        // Copy response headers that might be useful
+        const headersToForward = ['content-length', 'content-type', 'accept-ranges', 'cache-control'];
+        headersToForward.forEach(header => {
+            if (videoRequest.headers[header]) {
+                res.setHeader(header.replace(/^\w/, c => c.toUpperCase()), videoRequest.headers[header]);
+            }
+        });
+        
+        // Handle client disconnection
+        req.on('close', () => {
+            if (videoRequest.data) {
+                videoRequest.data.destroy();
+            }
+        });
+        
+        // Pipe the video data to response
+        videoRequest.data.pipe(res);
+        
+    } catch (error) {
+        console.error('Download error:', error.message);
+        if (!res.headersSent) {
+            res.status(500).send(`Download failed: ${error.message}`);
+        }
+    }
+});
+
+app.listen(port, () => {
+  const environment = process.env.NODE_ENV || 'development';
+  if (environment === 'development') {
+    console.log(`Server running at http://localhost:${port}`);
+  } else {
+    console.log(`Server running in ${environment} mode on port ${port}`);
+  }
+});

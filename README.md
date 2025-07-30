@@ -1,51 +1,44 @@
-<div align="center">
-
 # ani-web
 
-[![](https://img.shields.io/travis/serifpersia/ani-web.svg?style=flat-square)](https://travis-ci.org/serifpersia/ani-web)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![GitHub stars](https://img.shields.io/github/stars/serifpersia/ani-web.svg?style=flat-square)](https://github.com/serifpersia/ani-web/stargazers)
+A web application for streaming anime.
 
-![repo_logo](https://github.com/user-attachments/assets/09bbce21-9c01-4096-8088-7add1bba4b1e)
+## Deploying to Vercel
 
-</div align="center">
+Follow these steps to deploy ani-web to Vercel:
 
-**ani-web** is easy to use local node based anime streaming web app. Most sites are too heavy for low end hardware which is why this project came to be.
+1. **Fork or Clone the Repository**
+   - Fork this repository to your GitHub account or clone it locally
 
-## Prerequisites
+2. **Connect to Vercel**
+   - Go to [Vercel](https://vercel.com/) and sign up or log in
+   - Click on "New Project"
+   - Import your GitHub repository
 
-*   **Node.js**: Version 16 or higher ([Download](https://nodejs.org/)).
+3. **Configure Project**
+   - Keep the default settings
+   - Vercel will automatically detect the Node.js project
+   - The `vercel.json` file in the repository will handle the configuration
 
-## Installation
+4. **Deploy**
+   - Click "Deploy"
+   - Vercel will build and deploy your application
 
-Follow these steps to get ani-web running locally:
+5. **Access Your Application**
+   - Once deployment is complete, you can access your application at the URL provided by Vercel
 
-1.  **Clone or Download the Repository:**
+## Important Notes
 
-    ```bash
-	Clone this repository or download the ZIP file. 
-    git clone https://github.com/serifpersia/ani-web.git
-    cd ani-web
-    ```
+- The application uses SQLite for data storage. In the Vercel serverless environment, the database is stored in the `/tmp` directory, which means data will not persist between deployments.
+- For a production environment with persistent data, consider using a database service like MongoDB Atlas, PostgreSQL on Heroku, or other cloud database solutions.
 
-3.  **Install Dependencies:**
-    ```bash
-	npm run build
-    ```
+## Local Development
 
-## Usage
+```bash
+# Install dependencies
+npm install
 
-1.  **Start the Application:**
+# Start the server
+npm start
+```
 
-    ```bash
-    npm run start
-    ```
-	Use run.bat/.sh to start automatic install/build/start process.
-- Use chmod +x run.sh to be able to run it on linux
-
-3.  **Access the Web Interface:**
-    *   Open your web browser and navigate to the URL provided in the terminal (`http://localhost:3000`).
-
-
-## License
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+The application will be available at http://localhost:3000.

@@ -45,8 +45,32 @@ document.addEventListener('DOMContentLoaded', () => {
    setupSearchFilters();
    setupHomePage();
    setupWatchlistPage();
+   setupMobileMenu();
    window.addEventListener('hashchange', router);
 });
+
+function setupMobileMenu() {
+   const menuToggle = document.querySelector('.menu-toggle');
+   const nav = document.querySelector('nav');
+   const mobileSearchBtn = document.querySelector('.mobile-search-btn');
+   
+   if (menuToggle && nav) {
+      menuToggle.addEventListener('click', () => {
+         nav.classList.toggle('active');
+      });
+   }
+   
+   if (mobileSearchBtn) {
+      mobileSearchBtn.addEventListener('click', () => {
+         // Navigate to search page
+         window.location.hash = '#search';
+         // If the menu is open, close it
+         if (nav.classList.contains('active')) {
+            nav.classList.remove('active');
+         }
+      });
+   }
+}
 
 async function initProfileSystem() {
    try {
@@ -984,6 +1008,7 @@ function displayEpisodePlayer(sources, showId, episodeNumber, showMeta, preferre
    const playIcon = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
    const pauseIcon = `<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
    const fullscreenIcon = `<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>`;
+   const downloadIcon = `<svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>`;
    const exitFullscreenIcon = `<svg viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>`;
    const volumeHighIcon = `<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>`;
    const seekForwardIcon = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="m19.293 8-3.147-3.146a.5.5 0 1 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 1 1-.708-.708L19.293 9H5.5A1.5 1.5 0 0 0 4 10.5v6A1.5 1.5 0 0 0 5.5 18h15a.5.5 0 0 1 0 1h-15A2.5 2.5 0 0 1 3 16.5v-6A2.5 2.5 0 0 1 5.5 8z"/><text x="6.5" y="16.25" font-size="8">10</text></svg>`;
@@ -1031,6 +1056,7 @@ function displayEpisodePlayer(sources, showId, episodeNumber, showMeta, preferre
                         <span class="slider"></span>
                      </label>
                   </div>
+                  <button id="download-btn" class="control-button" title="Download Video">${downloadIcon}</button>
                   <button id="cc-btn" class="control-button disabled"><svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2v-.5H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2v-.5H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg></button>
                   <button id="settings-btn" class="control-button"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M12.785.45c1.039 0 1.932.715 2.127 1.705l.087.44c.342 1.73 2.187 2.762 3.903 2.184l.436-.147c.982-.33 2.067.062 2.587.934l.785 1.318c.52.872.326 1.98-.46 2.639l-.35.293a2.83 2.83 0 0 0 0 4.368l.35.293c.787.66.98 1.767.46 2.64l-.785 1.317c-.52.872-1.605 1.264-2.587.934l-.436-.147c-1.716-.578-3.561.454-3.903 2.184l-.087.44c-.195.99-1.088 1.705-2.127 1.705h-1.57c-1.039 0-1.932-.716-2.127-1.705L9 21.405c-.342-1.73-2.187-2.762-3.903-2.184l-.436.146c-.982.331-2.067-.06-2.587-.933l-.785-1.318a2.055 2.055 0 0 1 .46-2.639l.35-.293a2.83 2.83 0 0 0 0-4.368l-.35-.293a2.055 2.055 0 0 1-.46-2.64l.785-1.317c.52-.872 1.605-1.264 2.587-.934l.436.147C6.813 5.357 8.658 4.324 9 2.595l.087-.44C9.283 1.165 10.176.45 11.215.45zM12 15.3a3.3 3.3 0 1 0 0-6.6 3.3 3.3 0 0 0 0 6.6" fill="currentColor"/></svg></button>
                   <button id="fullscreen-btn" class="control-button">${fullscreenIcon}</button>
@@ -1084,6 +1110,7 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
    const fullscreenBtn = document.getElementById('fullscreen-btn');
    const settingsBtn = document.getElementById('settings-btn');
    const ccBtn = document.getElementById('cc-btn');
+   const downloadBtn = document.getElementById('download-btn');
    const settingsMenu = document.getElementById('settings-menu');
    const ccMenu = document.getElementById('cc-menu');
    const sourceOptions = document.getElementById('source-options');
@@ -1458,6 +1485,56 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
       playerContent.classList.toggle('fullscreen', !!document.fullscreenElement);
       fullscreenBtn.innerHTML = document.fullscreenElement ? exitFullscreenIcon : fullscreenIcon;
    });
+   
+   // Current video URL and headers for download
+   let currentVideoUrl = '';
+   let currentVideoFilename = '';
+   let currentHeaders = {};
+   let isProxiedUrl = false;
+   
+   downloadBtn.addEventListener('click', () => {
+      if (currentVideoUrl) {
+         // Get the filename from the data attribute or use the currentVideoFilename
+         const filename = downloadBtn.getAttribute('data-filename') || currentVideoFilename || '1P_0.mp4';
+         console.log('Download button clicked with filename:', filename);
+         
+         // Create a form to submit the download request
+         const form = document.createElement('form');
+         form.method = 'GET';
+         form.action = '/api/download-video';
+         form.target = '_blank';
+         
+         // Add URL parameter
+         const urlInput = document.createElement('input');
+         urlInput.type = 'hidden';
+         urlInput.name = 'url';
+         urlInput.value = currentVideoUrl;
+         form.appendChild(urlInput);
+         
+         // Add referer if available
+         if (currentHeaders && currentHeaders.Referer) {
+            const refererInput = document.createElement('input');
+            refererInput.type = 'hidden';
+            refererInput.name = 'referer';
+            refererInput.value = currentHeaders.Referer;
+            form.appendChild(refererInput);
+         }
+         
+         // Add filename - always include a filename
+         const filenameInput = document.createElement('input');
+         filenameInput.type = 'hidden';
+         filenameInput.name = 'filename';
+         filenameInput.value = filename;
+         form.appendChild(filenameInput);
+         
+         // Submit the form
+         document.body.appendChild(form);
+         form.submit();
+         document.body.removeChild(form);
+      } else {
+         alert('No downloadable video source available');
+      }
+   });
    const toggleMenu = (menu) => {
       menu.classList.toggle('hidden');
    };
@@ -1588,6 +1665,35 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 	const ccOptionsContainer = document.getElementById('cc-options-container');
 	ccOptionsContainer.innerHTML = '';
 	setPreferredSource(sourceName);
+	
+	// Set current video URL and headers for download button
+	currentVideoUrl = linkInfo.link;
+	currentHeaders = linkInfo.headers || {};
+	
+	// Get anime name and episode number
+	const animeName = document.querySelector('#player-page .show-header h2')?.textContent?.trim() || 'Anime';
+	const episodeNumber = document.querySelector('#episode-grid-player .result-item.active')?.getAttribute('data-episode') || '0';
+	
+	// Episode number is already extracted from the active episode element
+	// No need to parse it from a title
+	
+	// Format the filename as requested: AnimeName_EpisodeNumber.mp4
+	// Remove any characters that might cause issues in filenames
+	let safeAnimeName = animeName.replace(/[\s\\/:*?"<>|]+/g, '_');
+	// Ensure we have a valid anime name
+	if (!safeAnimeName || safeAnimeName === '_') {
+		safeAnimeName = '1P'; // Default name if extraction failed
+	}
+	
+	// Create the filename
+	currentVideoFilename = `${safeAnimeName}_${episodeNumber}.mp4`;
+	console.log('Setting filename for download:', currentVideoFilename);
+	
+	// Force update the download button with this filename
+	const downloadBtn = document.getElementById('downloadBtn');
+	if (downloadBtn) {
+		downloadBtn.setAttribute('data-filename', currentVideoFilename);
+	}
 
 	skipIntervals = [];
 	skippedInThisSession.clear();
@@ -1656,6 +1762,8 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 		if (linkInfo.headers && linkInfo.headers.Referer) {
 			proxiedUrl += `&referer=${encodeURIComponent(linkInfo.headers.Referer)}`;
 		}
+		// Set proxied URL flag for download button
+		isProxiedUrl = false;
 		const hls = new Hls();
 		hls.loadSource(proxiedUrl);
 		hls.attachMedia(videoElement);
@@ -1671,6 +1779,8 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 		if (linkInfo.headers && linkInfo.headers.Referer) {
 			proxiedUrl += `&referer=${encodeURIComponent(linkInfo.headers.Referer)}`;
 		}
+		// Set proxied URL flag for download button
+		isProxiedUrl = false;
 		videoElement.src = proxiedUrl;
 	}
 	

@@ -67,12 +67,17 @@ body {
 
 .logo {
    width: auto;
-   height: 210px;
+   height: 75px;
    object-fit: contain;
    display: block;
 }
 
-.menu-toggle {
+.mobile-controls {
+   display: none;
+   gap: 10px;
+}
+
+.menu-toggle, .mobile-search-btn {
    display: none;
    background: none;
    border: none;
@@ -81,7 +86,7 @@ body {
    padding: 8px;
 }
 
-.menu-toggle svg {
+.menu-toggle svg, .mobile-search-btn svg {
    width: 24px;
    height: 24px;
    fill: currentColor;
@@ -273,11 +278,23 @@ h4 {
 }
 
 .sidebar {
-   width: 300px;
+   width: 350px;
    flex-shrink: 0;
    background-color: var(--secondary-bg);
    padding: 15px;
    border-radius: 8px;
+   box-sizing: border-box;
+   overflow-x: hidden;
+   overflow-y: auto;
+   max-height: calc(100vh - 150px);
+   position: sticky;
+   top: 20px;
+   scrollbar-width: none; /* Firefox */
+   -ms-overflow-style: none; /* IE and Edge */
+}
+
+.sidebar::-webkit-scrollbar {
+   display: none; /* Chrome, Safari and Opera */
 }
 
 .sidebar-header {
@@ -349,8 +366,16 @@ h4 {
 
 .grid {
    display: grid;
-   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+   grid-template-columns: repeat(4, 1fr);
    gap: 20px;
+   width: 100%;
+}
+
+#continue-watching {
+   display: grid;
+   grid-template-columns: repeat(4, 1fr);
+   gap: 20px;
+   width: 100%;
 }
 
 .grid-item {
@@ -362,6 +387,11 @@ h4 {
    position: relative;
    display: flex;
    flex-direction: column;
+   box-sizing: border-box;
+   width: 100%;
+   max-width: 100%;
+   text-overflow: ellipsis;
+   margin: 0;
 }
 
 .grid-item:hover, .grid-item:focus {
@@ -409,9 +439,13 @@ h4 {
    text-align: center;
    min-height: 40px;
    flex-grow: 1;
-   display: flex;
+   display: -webkit-box;
    align-items: center;
    justify-content: center;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   -webkit-line-clamp: 2;
+   -webkit-box-orient: vertical;
 }
 
 .card-info-overlay {
@@ -501,6 +535,9 @@ h4 {
    border-radius: 5px;
    cursor: pointer;
    transition: background-color var(--animation-duration);
+   width: 100%;
+   box-sizing: border-box;
+   overflow: hidden;
 }
 
 .top-10-item:hover {
@@ -530,11 +567,18 @@ h4 {
 
 .item-details {
    flex-grow: 1;
+   overflow: hidden;
+   max-width: 100%;
 }
 
 .item-title {
    margin: 0 0 5px 0;
-   font-size: 0.9em;
+   font-size: 1.2em;
+   font-weight: 600;
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   max-width: 100%;
 }
 
 .ep-counts {
@@ -1514,10 +1558,10 @@ footer a:hover {
 
 @media (max-width: 1200px) {
    .grid {
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      grid-template-columns: repeat(4, 1fr);
    }
    .sidebar {
-      width: 250px;
+      width: 300px;
    }
    #volume-slider {
       width: 80px;
@@ -1530,12 +1574,21 @@ footer a:hover {
    }
    .sidebar {
       width: 100%;
+      position: static;
+      max-height: none;
    }
    .logo {
       height: 100px;
    }
+   .grid {
+      grid-template-columns: repeat(3, 1fr);
+   }
+   #continue-watching {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+   }
    .episode-grid {
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      grid-template-columns: repeat(3, 1fr);
    }
 }
 
@@ -1548,7 +1601,11 @@ footer a:hover {
       justify-content: space-between;
       gap: 15px;
    }
-   .menu-toggle {
+   .mobile-controls {
+      display: flex;
+      align-items: center;
+   }
+   .menu-toggle, .mobile-search-btn {
       display: block;
    }
    nav {
@@ -1570,10 +1627,15 @@ footer a:hover {
       font-size: 0.9rem;
    }
    .grid {
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
+   }
+   #continue-watching {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
    }
    .episode-grid {
-      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
    }
    .search-filters {
       flex-direction: column;
@@ -1605,6 +1667,12 @@ footer a:hover {
       flex-direction: row;
       overflow-x: auto;
    }
+   .sidebar {
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      overflow-x: hidden;
+   }
 }
 
 @media (max-width: 576px) {
@@ -1612,10 +1680,19 @@ footer a:hover {
       font-size: 14px;
    }
    .grid {
-      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+   }
+   .grid-item {
+      width: 100%;
+      box-sizing: border-box;
+   }
+   #continue-watching {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
    }
    .episode-grid {
-      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
    }
    .logo {
       height: 60px;
