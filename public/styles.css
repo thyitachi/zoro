@@ -951,6 +951,11 @@ input:checked + .slider:before {
    width: 24px;
    height: 24px;
    transition: transform 0.2s ease;
+   min-width: 44px;
+   min-height: 44px;
+   display: flex;
+   align-items: center;
+   justify-content: center;
 }
 
 .control-button:not(.disabled):hover {
@@ -972,11 +977,15 @@ input:checked + .slider:before {
 .seek-button {
    width: 36px;
    height: 36px;
+   min-width: 44px;
+   min-height: 44px;
 }
 
 .time-display {
    color: white;
    font-size: 14px;
+   align-self: center;
+   padding: 0 10px;
 }
 
 .progress-bar-container {
@@ -1717,5 +1726,34 @@ footer a:hover {
    }
    video::cue {
       font-size: 1.2rem;
+   }
+}
+
+@media (max-width: 480px) {
+   .control-button {
+      min-width: 48px;
+      min-height: 48px;
+      width: 48px;
+      height: 48px;
+   }
+   
+   .seek-button {
+      min-width: 56px;
+      min-height: 56px;
+      width: 56px;
+      height: 56px;
+   }
+   
+   .time-display {
+      font-size: 16px;
+      padding: 0 15px;
+   }
+   
+   .volume-slider-container {
+      width: 100px;
+   }
+   
+   #volume-slider {
+      width: 100px;
    }
 }
