@@ -1272,10 +1272,35 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
       } else {
          clearTimeout(clickTimer);
          clickTimer = null;
-         if (!document.fullscreenElement) {
-            playerContent.requestFullscreen();
+         
+         // Check for fullscreen state with cross-browser support
+         const isFullscreen = !!document.fullscreenElement || 
+                             !!document.webkitFullscreenElement || 
+                             !!document.mozFullScreenElement ||
+                             !!document.msFullscreenElement;
+         
+         if (!isFullscreen) {
+            // Request fullscreen with cross-browser support
+            if (playerContent.requestFullscreen) {
+               playerContent.requestFullscreen();
+            } else if (playerContent.webkitRequestFullscreen) { // Safari and iOS
+               playerContent.webkitRequestFullscreen();
+            } else if (playerContent.msRequestFullscreen) { // IE11
+               playerContent.msRequestFullscreen();
+            } else if (playerContent.mozRequestFullScreen) { // Firefox
+               playerContent.mozRequestFullScreen();
+            }
          } else {
-            document.exitFullscreen();
+            // Exit fullscreen with cross-browser support
+            if (document.exitFullscreen) {
+               document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) { // Safari and iOS
+               document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) { // IE11
+               document.msExitFullscreen();
+            } else if (document.mozCancelFullScreen) { // Firefox
+               document.mozCancelFullScreen();
+            }
          }
       }
    });
@@ -1490,16 +1515,50 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
    volumeSlider.style.setProperty('--value-percent', `${initialPercent}%`);
    
    fullscreenBtn.addEventListener('click', () => {
-      if (!document.fullscreenElement) {
-         playerContent.requestFullscreen();
+      // Check for standard fullscreen API
+      if (!document.fullscreenElement && 
+          !document.mozFullScreenElement && 
+          !document.webkitFullscreenElement && 
+          !document.msFullscreenElement) {
+         // Request fullscreen with cross-browser support
+         if (playerContent.requestFullscreen) {
+            playerContent.requestFullscreen();
+         } else if (playerContent.webkitRequestFullscreen) { // Safari and iOS
+            playerContent.webkitRequestFullscreen();
+         } else if (playerContent.msRequestFullscreen) { // IE11
+            playerContent.msRequestFullscreen();
+         } else if (playerContent.mozRequestFullScreen) { // Firefox
+            playerContent.mozRequestFullScreen();
+         }
       } else {
-         document.exitFullscreen();
+         // Exit fullscreen with cross-browser support
+         if (document.exitFullscreen) {
+            document.exitFullscreen();
+         } else if (document.webkitExitFullscreen) { // Safari and iOS
+            document.webkitExitFullscreen();
+         } else if (document.msExitFullscreen) { // IE11
+            document.msExitFullscreen();
+         } else if (document.mozCancelFullScreen) { // Firefox
+            document.mozCancelFullScreen();
+         }
       }
    });
-   document.addEventListener('fullscreenchange', () => {
-      playerContent.classList.toggle('fullscreen', !!document.fullscreenElement);
-      fullscreenBtn.innerHTML = document.fullscreenElement ? exitFullscreenIcon : fullscreenIcon;
-   });
+
+   // Handle fullscreen change events with cross-browser support
+   document.addEventListener('fullscreenchange', handleFullscreenChange);
+   document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Safari and iOS
+   document.addEventListener('mozfullscreenchange', handleFullscreenChange); // Firefox
+   document.addEventListener('MSFullscreenChange', handleFullscreenChange); // IE11
+   
+   function handleFullscreenChange() {
+      const isFullscreen = !!document.fullscreenElement || 
+                          !!document.webkitFullscreenElement || 
+                          !!document.mozFullScreenElement ||
+                          !!document.msFullscreenElement;
+      
+      playerContent.classList.toggle('fullscreen', isFullscreen);
+      fullscreenBtn.innerHTML = isFullscreen ? exitFullscreenIcon : fullscreenIcon;
+   }
    
    // Current video URL and headers for download
    let currentVideoUrl = '';

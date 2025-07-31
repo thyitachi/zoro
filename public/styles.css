@@ -1934,6 +1934,47 @@ footer a:hover {
         justify-content: center;
         padding: 0;
     }
+    
+    /* Ensure fullscreen button is visible and clickable on iOS */
+    #fullscreen-btn {
+        position: relative;
+        z-index: 10;
+        -webkit-appearance: none;
+        -webkit-tap-highlight-color: rgba(0,0,0,0);
+    }
+    
+    /* Fix for iOS fullscreen */
+    .player-content:-webkit-full-screen video {
+        width: 100%;
+        height: 100%;
+    }
+    
+    /* Ensure controls are visible in fullscreen on mobile */
+    .player-content:-webkit-full-screen .video-controls-container,
+    .player-content:fullscreen .video-controls-container,
+    .player-content.fullscreen .video-controls-container {
+        position: absolute;
+        bottom: 0;
+        width: 100%;
+        z-index: 2147483647; /* Maximum z-index value */
+    }
+}
+
+.player-content.fullscreen,
+.player-content:-webkit-full-screen,
+.player-content:-moz-full-screen,
+.player-content:-ms-fullscreen,
+.player-content:fullscreen {
+   position: fixed;
+   top: 0;
+   left: 0;
+   width: 100% !important;
+   height: 100% !important;
+   z-index: 9999;
+   background: black;
+   margin: 0;
+   border-radius: 0;
+   max-width: none;
 }
 
 @media (max-width: 400px) {
