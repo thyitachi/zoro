@@ -36,6 +36,9 @@ function router() {
        data.params = new URLSearchParams(queryString);
    }
 
+   // Log navigation for debugging
+   console.log(`Navigating to: ${path}, showId: ${data.showId}, episodeToPlay: ${data.episodeToPlay}`);
+   
    renderPageContent(path || 'home', data);
 }
 
@@ -837,6 +840,9 @@ async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
          epToPlay = sortedEpisodes[0];
       }
       
+      // Log the episode selection logic for debugging
+      console.log(`Episode selection: requested=${episodeToPlay}, watched=${watchedEpisodes.length > 0}, selected=${epToPlay}`);
+      
       // Pass the episode to play to displayEpisodes so it can mark it as active
       displayEpisodes(sortedEpisodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist, epToPlay);
       
@@ -875,6 +881,9 @@ function createEpisodeJumpControls(episodes) {
 function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist, currentEpisode = null) {
    const page = document.getElementById('player-page');
    const jumpControls = createEpisodeJumpControls(episodes);
+
+   // Log the current episode for debugging
+   console.log(`displayEpisodes called with currentEpisode: ${currentEpisode}`);
 
    page.innerHTML = `
       <div class="player-page-content">
@@ -937,6 +946,13 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
    page.querySelectorAll('.result-item').forEach(item => {
       item.addEventListener('click', () => {
          const episodeNumber = item.dataset.episode;
+         
+         // Update active class immediately for better user feedback
+         document.querySelectorAll('#episode-grid-player .result-item').forEach(ep => {
+            ep.classList.remove('active');
+         });
+         item.classList.add('active');
+         
          navigateTo(`#player/${showId}/${episodeNumber}`);
       });
    });
@@ -997,7 +1013,13 @@ async function fetchVideoLinks(showId, episodeNumber, showMeta, mode = 'sub') {
    playerContainer.innerHTML = '<div class="loading"></div>';
    playerPageContent.insertBefore(playerContainer, document.querySelector('.ep-jump-controls, #episode-grid-player'));
    
-   // The active class is now set in displayEpisodes, so we don't need to modify it here
+   // Update the active class for the currently playing episode
+   document.querySelectorAll('#episode-grid-player .result-item').forEach(item => {
+      item.classList.remove('active');
+      if (item.dataset.episode === episodeNumber) {
+         item.classList.add('active');
+      }
+   });
    try {
       const [sourcesResponse, settingsResponse, progressResponse] = await Promise.all([
          fetch(`/video?showId=${encodeURIComponent(showId)}&episodeNumber=${encodeURIComponent(episodeNumber)}&mode=${mode}`),
