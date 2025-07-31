@@ -1630,6 +1630,17 @@ footer a:hover {
    }
 }
 
+/* iPad-specific styles */
+@media only screen and (min-width: 768px) and (max-width: 1024px) {
+   .right-controls {
+      justify-content: space-between;
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+   }
+}
+
 @media (max-width: 768px) {
     .app-container {
        padding: 0 10px;
