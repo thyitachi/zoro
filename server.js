@@ -982,7 +982,18 @@ app.get('/api/download-video', async (req, res) => {
         
         // Set download headers
         res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+        
+        // Check if the request is from an iPad/iOS device
+        const userAgent = req.headers['user-agent'] || '';
+        const isiPad = /iPad|iPhone|iPod/.test(userAgent);
+        
+        if (isiPad) {
+            // For iPad/iOS devices, use a simpler Content-Disposition format
+            res.setHeader('Content-Disposition', `attachment; filename=${safeFilename}`);
+        } else {
+            // For other devices, use the standard format with UTF-8 encoding
+            res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+        }
         
         // Create a direct proxy to the video
         const videoRequest = await axios({

@@ -1513,39 +1513,55 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
          const filename = downloadBtn.getAttribute('data-filename') || currentVideoFilename || '1P_0.mp4';
          console.log('Download button clicked with filename:', filename);
          
-         // Create a form to submit the download request
-         const form = document.createElement('form');
-         form.method = 'GET';
-         form.action = '/api/download-video';
-         form.target = '_blank';
+         // Check if this is an iOS device (iPad, iPhone, iPod)
+         const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
          
-         // Add URL parameter
-         const urlInput = document.createElement('input');
-         urlInput.type = 'hidden';
-         urlInput.name = 'url';
-         urlInput.value = currentVideoUrl;
-         form.appendChild(urlInput);
-         
-         // Add referer if available
-         if (currentHeaders && currentHeaders.Referer) {
-            const refererInput = document.createElement('input');
-            refererInput.type = 'hidden';
-            refererInput.name = 'referer';
-            refererInput.value = currentHeaders.Referer;
-            form.appendChild(refererInput);
+         if (isiOS) {
+            // For iOS devices, open the download URL directly in a new tab
+            // This works better with how iOS handles downloads
+            let downloadUrl = `/api/download-video?url=${encodeURIComponent(currentVideoUrl)}&filename=${encodeURIComponent(filename)}`;
+            
+            if (currentHeaders && currentHeaders.Referer) {
+               downloadUrl += `&referer=${encodeURIComponent(currentHeaders.Referer)}`;
+            }
+            
+            window.open(downloadUrl, '_blank');
+         } else {
+            // For non-iOS devices, use the form submission approach
+            // Create a form to submit the download request
+            const form = document.createElement('form');
+            form.method = 'GET';
+            form.action = '/api/download-video';
+            form.target = '_blank';
+            
+            // Add URL parameter
+            const urlInput = document.createElement('input');
+            urlInput.type = 'hidden';
+            urlInput.name = 'url';
+            urlInput.value = currentVideoUrl;
+            form.appendChild(urlInput);
+            
+            // Add referer if available
+            if (currentHeaders && currentHeaders.Referer) {
+               const refererInput = document.createElement('input');
+               refererInput.type = 'hidden';
+               refererInput.name = 'referer';
+               refererInput.value = currentHeaders.Referer;
+               form.appendChild(refererInput);
+            }
+            
+            // Add filename - always include a filename
+            const filenameInput = document.createElement('input');
+            filenameInput.type = 'hidden';
+            filenameInput.name = 'filename';
+            filenameInput.value = filename;
+            form.appendChild(filenameInput);
+            
+            // Submit the form
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
          }
-         
-         // Add filename - always include a filename
-         const filenameInput = document.createElement('input');
-         filenameInput.type = 'hidden';
-         filenameInput.name = 'filename';
-         filenameInput.value = filename;
-         form.appendChild(filenameInput);
-         
-         // Submit the form
-         document.body.appendChild(form);
-         form.submit();
-         document.body.removeChild(form);
       } else {
          alert('No downloadable video source available');
       }
