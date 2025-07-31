@@ -1030,7 +1030,7 @@ function displayEpisodePlayer(sources, showId, episodeNumber, showMeta, preferre
    const seekBackwardIcon = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="m4.707 8 3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 1 0 .708-.708L4.707 9H18.5a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-15a.5.5 0 0 0 0 1h15a2.5 2.5 0 0 0 2.5-2.5v-6A2.5 2.5 0 0 0 18.5 8z"/><text x="8" y="16.25" font-size="8">10</text></svg>`;
    playerSection.innerHTML = `
       <div id="player-content" class="player-content">
-         <video id="videoPlayer"></video>
+         <video id="videoPlayer" playsinline webkit-playsinline></video>
          <div id="video-controls-container" class="video-controls-container">
             <div class="progress-bar-container">
                <div id="progress-bubble" class="slider-bubble">00:00</div>
@@ -1280,8 +1280,12 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
                              !!document.msFullscreenElement;
          
          if (!isFullscreen) {
-            // Request fullscreen with cross-browser support
-            if (playerContent.requestFullscreen) {
+            // iOS Safari requires using webkitEnterFullscreen directly on the video element
+            if (/iPhone|iPad|iPod/i.test(navigator.userAgent) && video.webkitEnterFullscreen) {
+               video.webkitEnterFullscreen();
+            }
+            // Request fullscreen with cross-browser support for other devices
+            else if (playerContent.requestFullscreen) {
                playerContent.requestFullscreen();
             } else if (playerContent.webkitRequestFullscreen) { // Safari and iOS
                playerContent.webkitRequestFullscreen();
@@ -1520,8 +1524,12 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
           !document.mozFullScreenElement && 
           !document.webkitFullscreenElement && 
           !document.msFullscreenElement) {
-         // Request fullscreen with cross-browser support
-         if (playerContent.requestFullscreen) {
+         // iOS Safari requires using webkitEnterFullscreen directly on the video element
+         if (/iPhone|iPad|iPod/i.test(navigator.userAgent) && video.webkitEnterFullscreen) {
+            video.webkitEnterFullscreen();
+         }
+         // Request fullscreen with cross-browser support for other devices
+         else if (playerContent.requestFullscreen) {
             playerContent.requestFullscreen();
          } else if (playerContent.webkitRequestFullscreen) { // Safari and iOS
             playerContent.webkitRequestFullscreen();
