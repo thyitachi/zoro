@@ -5,6 +5,50 @@ let playerInactivityTimer = null;
 let profiles = [];
 let activeProfileId = null;
 let videoProgressUpdateTimer = null;
+let currentUser = null;
+let firebaseDb = null;
+
+// Firebase configuration
+const firebaseConfig = { 
+  apiKey: "AIzaSyDyStzeP2mBubrrTaJtPr5Zw4BxfxyEyOA", 
+  authDomain: "ashanime-web-app-3b033.firebaseapp.com", 
+  projectId: "ashanime-web-app-3b033", 
+  storageBucket: "ashanime-web-app-3b033.firebasestorage.app", 
+  messagingSenderId: "380734891442", 
+  appId: "1:380734891442:web:64340b418db0918ac830ab",
+  databaseURL: "https://ashanime-web-app-3b033-default-rtdb.asia-southeast1.firebasedatabase.app/"
+};
+
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+firebaseDb = firebase.database();
+
+// Firebase auth state observer
+firebase.auth().onAuthStateChanged((user) => {
+  currentUser = user;
+  if (user) {
+    console.log('User is signed in:', user.uid);
+    // Load user data from Firebase
+    loadUserData();
+  } else {
+    console.log('User is signed out');
+  }
+});
+
+// Load user data from Firebase
+async function loadUserData() {
+  if (!currentUser) return;
+  
+  try {
+    const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
+    userRef.on('value', (snapshot) => {
+      const userData = snapshot.val() || {};
+      console.log('User data loaded:', userData);
+    });
+  } catch (error) {
+    console.error('Error loading user data:', error);
+  }
+}
 
 async function fetchWithProfile(url, options = {}) {
    if (!activeProfileId) {
@@ -44,6 +88,7 @@ function router() {
 
 document.addEventListener('DOMContentLoaded', () => {
    setupThemeSelector();
+   setupFirebaseAuth();
    initProfileSystem();
    setupSearchFilters();
    setupHomePage();
@@ -51,6 +96,140 @@ document.addEventListener('DOMContentLoaded', () => {
    setupMobileMenu();
    window.addEventListener('hashchange', router);
 });
+
+function setupFirebaseAuth() {
+   // Add login/signup UI to the header
+   const headerRight = document.querySelector('.header-right');
+   const authContainer = document.createElement('div');
+   authContainer.className = 'auth-container';
+   authContainer.innerHTML = `
+      <div id="auth-status-container">
+         <button id="login-btn" class="auth-btn">Login</button>
+         <button id="signup-btn" class="auth-btn">Sign Up</button>
+         <div id="user-container" style="display: none;">
+            <span id="user-email"></span>
+            <button id="logout-btn" class="auth-btn">Logout</button>
+         </div>
+      </div>
+      <div id="auth-modal" class="modal" style="display: none;">
+         <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2 id="auth-modal-title">Login</h2>
+            <form id="auth-form">
+               <div class="form-group">
+                  <label for="email">Email</label>
+                  <input type="email" id="email" required>
+               </div>
+               <div class="form-group">
+                  <label for="password">Password</label>
+                  <input type="password" id="password" required>
+               </div>
+               <button type="submit" id="auth-submit-btn">Login</button>
+            </form>
+         </div>
+      </div>
+   `;
+   
+   headerRight.insertBefore(authContainer, headerRight.firstChild);
+   
+   // Update UI based on auth state
+   firebase.auth().onAuthStateChanged((user) => {
+      const loginBtn = document.getElementById('login-btn');
+      const signupBtn = document.getElementById('signup-btn');
+      const userContainer = document.getElementById('user-container');
+      const userEmail = document.getElementById('user-email');
+      
+      if (user) {
+         // User is signed in
+         if (loginBtn) loginBtn.style.display = 'none';
+         if (signupBtn) signupBtn.style.display = 'none';
+         if (userContainer) userContainer.style.display = 'flex';
+         if (userEmail) userEmail.textContent = user.email;
+      } else {
+         // User is signed out
+         if (loginBtn) loginBtn.style.display = 'inline-block';
+         if (signupBtn) signupBtn.style.display = 'inline-block';
+         if (userContainer) userContainer.style.display = 'none';
+      }
+   });
+   
+   // Setup event listeners
+   const loginBtn = document.getElementById('login-btn');
+   const signupBtn = document.getElementById('signup-btn');
+   const logoutBtn = document.getElementById('logout-btn');
+   const authModal = document.getElementById('auth-modal');
+   const closeModal = document.querySelector('.close-modal');
+   const authForm = document.getElementById('auth-form');
+   const authModalTitle = document.getElementById('auth-modal-title');
+   const authSubmitBtn = document.getElementById('auth-submit-btn');
+   
+   let authMode = 'login';
+   
+   loginBtn.addEventListener('click', () => {
+      authMode = 'login';
+      authModalTitle.textContent = 'Login';
+      authSubmitBtn.textContent = 'Login';
+      authModal.style.display = 'block';
+   });
+   
+   signupBtn.addEventListener('click', () => {
+      authMode = 'signup';
+      authModalTitle.textContent = 'Sign Up';
+      authSubmitBtn.textContent = 'Sign Up';
+      authModal.style.display = 'block';
+   });
+   
+   logoutBtn.addEventListener('click', () => {
+      firebase.auth().signOut().catch(error => {
+         console.error('Error signing out:', error);
+      });
+   });
+   
+   closeModal.addEventListener('click', () => {
+      authModal.style.display = 'none';
+   });
+   
+   window.addEventListener('click', (event) => {
+      if (event.target === authModal) {
+         authModal.style.display = 'none';
+      }
+   });
+   
+   authForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      
+      if (authMode === 'login') {
+         firebase.auth().signInWithEmailAndPassword(email, password)
+            .then(() => {
+               authModal.style.display = 'none';
+               authForm.reset();
+            })
+            .catch(error => {
+               alert(`Login error: ${error.message}`);
+            });
+      } else {
+         firebase.auth().createUserWithEmailAndPassword(email, password)
+            .then(() => {
+               authModal.style.display = 'none';
+               authForm.reset();
+               // Initialize user data in Firebase
+               const user = firebase.auth().currentUser;
+               if (user) {
+                  firebaseDb.ref(`users/${user.uid}`).set({
+                     email: user.email,
+                     createdAt: firebase.database.ServerValue.TIMESTAMP,
+                     watchedEpisodes: {}
+                  });
+               }
+            })
+            .catch(error => {
+               alert(`Sign up error: ${error.message}`);
+            });
+      }
+   });
+}
 
 function setupMobileMenu() {
    const menuToggle = document.querySelector('.menu-toggle');
@@ -809,20 +988,64 @@ async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
       if (!showMetaResponse.ok) throw new Error(`Failed to fetch show metadata: ${showMetaResponse.statusText}`);
       const showMeta = await showMetaResponse.json();
 
-      const [episodesResponse, watchedResponse, watchlistResponse] = await Promise.all([
-         fetch(`/episodes?showId=${encodeURIComponent(showId)}&mode=${mode}`),
-         fetchWithProfile(`/watched-episodes/${showId}`),
-         fetchWithProfile(`/watchlist/check/${showId}`)
-      ]);
-
+      // Get episodes from API
+      const episodesResponse = await fetch(`/episodes?showId=${encodeURIComponent(showId)}&mode=${mode}`);
       if (!episodesResponse.ok) throw new Error(`Failed to fetch episodes list: ${episodesResponse.statusText}`);
-      if (!watchedResponse.ok) throw new Error(`Failed to fetch watched status: ${watchedResponse.statusText}`);
-      if (!watchlistResponse.ok) throw new Error(`Failed to fetch watchlist status: ${watchlistResponse.statusText}`);
-
       const { episodes, description } = await episodesResponse.json();
       const sortedEpisodes = episodes.sort((a, b) => parseFloat(a) - parseFloat(b));
-      const watchedEpisodes = await watchedResponse.json();
-      const { inWatchlist } = await watchlistResponse.json();
+      
+      // Get watched episodes - either from Firebase (if logged in) or from local API
+      let watchedEpisodes = [];
+      let lastWatchedTimestamp = 0;
+      let lastWatchedEp = null;
+      
+      if (currentUser) {
+         // Get watched episodes from Firebase
+         try {
+            const watchedSnapshot = await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes/${showId}`).once('value');
+            const watchedData = watchedSnapshot.val() || {};
+            
+            // Extract episode numbers and find the most recently watched
+            watchedEpisodes = Object.keys(watchedData);
+            
+            // Find the most recently watched episode based on timestamp
+            Object.entries(watchedData).forEach(([epNum, epData]) => {
+               if (epData.timestamp && epData.timestamp > lastWatchedTimestamp) {
+                  lastWatchedTimestamp = epData.timestamp;
+                  lastWatchedEp = epNum;
+               }
+            });
+            
+            console.log('Firebase watched episodes:', watchedEpisodes);
+            console.log('Last watched episode from Firebase:', lastWatchedEp);
+         } catch (err) {
+            console.error('Error fetching watched episodes from Firebase:', err);
+         }
+      } else {
+         // Fallback to local API if not logged in
+         try {
+            const watchedResponse = await fetchWithProfile(`/watched-episodes/${showId}`);
+            if (watchedResponse.ok) {
+               watchedEpisodes = await watchedResponse.json();
+               
+               // For local API, we assume the highest episode number is the last watched
+               if (watchedEpisodes.length > 0) {
+                  const numericWatchedEpisodes = watchedEpisodes.map(ep => parseFloat(ep));
+                  lastWatchedEp = Math.max(...numericWatchedEpisodes).toString();
+               }
+            }
+         } catch (err) {
+            console.error('Error fetching watched episodes from local API:', err);
+         }
+      }
+      
+      // Get watchlist status
+      const watchlistResponse = await fetchWithProfile(`/watchlist/check/${showId}`);
+      let inWatchlist = false;
+      if (watchlistResponse.ok) {
+         const watchlistData = await watchlistResponse.json();
+         inWatchlist = watchlistData.inWatchlist;
+      }
       
       // Determine which episode to play:
       // 1. If a specific episode is requested, play that
@@ -831,17 +1054,14 @@ async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
       let epToPlay;
       if (episodeToPlay) {
          epToPlay = episodeToPlay;
-      } else if (watchedEpisodes.length > 0) {
-         // Find the last watched episode (highest episode number)
-         const numericWatchedEpisodes = watchedEpisodes.map(ep => parseFloat(ep));
-         const lastWatchedEp = Math.max(...numericWatchedEpisodes).toString();
+      } else if (lastWatchedEp) {
          epToPlay = lastWatchedEp;
       } else {
          epToPlay = sortedEpisodes[0];
       }
       
       // Log the episode selection logic for debugging
-      console.log(`Episode selection: requested=${episodeToPlay}, watched=${watchedEpisodes.length > 0}, selected=${epToPlay}`);
+      console.log(`Episode selection: requested=${episodeToPlay}, lastWatched=${lastWatchedEp}, selected=${epToPlay}`);
       
       // Pass the episode to play to displayEpisodes so it can mark it as active
       displayEpisodes(sortedEpisodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist, epToPlay);
@@ -1020,7 +1240,23 @@ async function fetchVideoLinks(showId, episodeNumber, showMeta, mode = 'sub') {
          item.classList.add('active');
       }
    });
+   
    try {
+      // Mark episode as watched in Firebase if user is logged in
+      if (currentUser) {
+         const timestamp = firebase.database.ServerValue.TIMESTAMP;
+         await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes/${showId}/${episodeNumber}`).set({
+            timestamp: timestamp,
+            showName: showMeta.name
+         });
+         
+         // Update the watched class for this episode
+         const episodeItem = document.querySelector(`#episode-grid-player .result-item[data-episode="${episodeNumber}"]`);
+         if (episodeItem && !episodeItem.classList.contains('watched')) {
+            episodeItem.classList.add('watched');
+         }
+      }
+      
       const [sourcesResponse, settingsResponse, progressResponse] = await Promise.all([
          fetch(`/video?showId=${encodeURIComponent(showId)}&episodeNumber=${encodeURIComponent(episodeNumber)}&mode=${mode}`),
          fetchWithProfile(`/settings/preferredSource`),
