@@ -823,7 +823,22 @@ async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
       
       displayEpisodes(sortedEpisodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist);
       
-      const epToPlay = episodeToPlay || sortedEpisodes[0];
+      // Determine which episode to play:
+      // 1. If a specific episode is requested, play that
+      // 2. If user has watched episodes, play the last watched episode
+      // 3. Otherwise, play the first episode
+      let epToPlay;
+      if (episodeToPlay) {
+         epToPlay = episodeToPlay;
+      } else if (watchedEpisodes.length > 0) {
+         // Find the last watched episode (highest episode number)
+         const numericWatchedEpisodes = watchedEpisodes.map(ep => parseFloat(ep));
+         const lastWatchedEp = Math.max(...numericWatchedEpisodes).toString();
+         epToPlay = lastWatchedEp;
+      } else {
+         epToPlay = sortedEpisodes[0];
+      }
+      
       if (epToPlay) {
          fetchVideoLinks(showId, epToPlay, showMeta, mode);
       }
@@ -980,7 +995,13 @@ async function fetchVideoLinks(showId, episodeNumber, showMeta, mode = 'sub') {
    playerContainer.id = 'player-section-container';
    playerContainer.innerHTML = '<div class="loading"></div>';
    playerPageContent.insertBefore(playerContainer, document.querySelector('.ep-jump-controls, #episode-grid-player'));
-   document.querySelectorAll('#episode-grid-player .result-item').forEach(item => item.classList.remove('active'));
+   
+   // Update episode selection - remove all active classes first
+   document.querySelectorAll('#episode-grid-player .result-item').forEach(item => {
+      item.classList.remove('active');
+   });
+   
+   // Add active class to the current episode
    const activeEpItem = document.querySelector(`#episode-grid-player .result-item[data-episode='${episodeNumber}']`);
    if (activeEpItem) activeEpItem.classList.add('active');
    try {

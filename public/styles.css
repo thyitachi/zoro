@@ -51,6 +51,10 @@ body {
    padding: 0 20px;
 }
 
+.page {
+   padding: 0 20px;
+}
+
 .site-header {
    display: flex;
    justify-content: space-between;
@@ -604,8 +608,12 @@ h4 {
    transition: background-color var(--animation-duration);
 }
 
-.result-item:hover, .result-item.active {
-   background-color: var(--accent-hover);
+.result-item:hover {
+   background-color: #4CAF50; /* Green hover color */
+}
+
+.result-item.active {
+   background-color: #4CAF50; /* Green for active/selected episode */
 }
 
 .result-item.watched {
@@ -706,7 +714,8 @@ video::cue {
 .toggle-container {
    display: flex;
    align-items: center;
-   gap: 8px;
+   gap: 5px;
+   white-space: nowrap;
 }
 
 .switch {
@@ -910,13 +919,15 @@ input:checked + .slider:before {
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
 }
 
 @media (max-width: 768px) {
    .player-content {
-       margin: 10px auto;
+       margin: 10px 0;
        border-radius: 8px;
        max-width: 100%;
+       width: 100%;
    }
 }
 
@@ -931,23 +942,33 @@ input:checked + .slider:before {
     left: 0;
     right: 0;
     background: linear-gradient(to top, rgba(0, 0, 0, 0.85), transparent);
-    padding: 15px 20px;
+    padding: 0;
     opacity: 1;
     transition: opacity 0.3s ease;
     pointer-events: auto;
     border-radius: 0 0 12px 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .bottom-controls {
-   display: flex;
-   justify-content: space-between;
-   align-items: center;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 100%;
+    padding: 0 20px;
+    box-sizing: border-box;
 }
 
 .left-controls, .right-controls {
    display: flex;
    align-items: center;
    gap: 15px;
+   flex-wrap: wrap;
 }
 
 .control-button {
@@ -997,7 +1018,7 @@ input:checked + .slider:before {
 }
 
 .progress-bar-container {
-   padding: 16px 0;
+   padding: 8px 0;
    cursor: pointer;
    position: relative;
 }
@@ -1613,6 +1634,23 @@ footer a:hover {
     .app-container {
        padding: 0 10px;
     }
+    
+    .page {
+       padding: 0 10px;
+    }
+    #player-page.page {
+    padding: 0;
+    max-width: 100%;
+    width: 100%;
+    margin: 0;
+    box-sizing: border-box;
+}
+    .player-content {
+        margin: 10px 0;
+        width: 100%;
+        max-width: 100%;
+        border-radius: 8px;
+    }
     .site-header {
        flex-direction: row;
        justify-content: space-between;
@@ -1662,19 +1700,34 @@ footer a:hover {
        width: 100%;
     }
     .bottom-controls {
-       flex-direction: column;
-       align-items: stretch;
-       margin-bottom: 10px;
+       flex-wrap: wrap;
+       gap: 10px;
+       margin-bottom: 0;
+       justify-content: space-between;
+       width: 100%;
+       padding: 0 15px;
+       box-sizing: border-box;
     }
     .left-controls, .right-controls {
+       flex-wrap: wrap;
+       gap: 8px;
        justify-content: center;
     }
+    .right-controls {
+       justify-content: space-between;
+       width: 100%;
+       margin-top: 5px;
+       display: flex;
+       flex-wrap: wrap;
+       gap: 8px;
+    }
     .progress-bar-container {
-       padding: 8px 0;
+       padding: 3px 0;
     }
     .time-display {
        font-size: 12px;
        padding: 0 5px;
+       white-space: nowrap;
     }
     .control-button {
        min-width: 36px;
@@ -1722,6 +1775,25 @@ footer a:hover {
     body {
        font-size: 14px;
     }
+    .app-container {
+       padding: 0 10px;
+    }
+    
+    .page {
+       padding: 0 10px;
+    }
+    #player-page.page {
+       padding: 0;
+       max-width: 100%;
+       width: 100%;
+       margin: 0;
+    }
+    .player-content {
+       margin: 5px 0;
+       border-radius: 6px;
+       width: 100%;
+       max-width: 100%;
+    }
     .grid {
        grid-template-columns: repeat(2, 1fr);
        gap: 10px;
@@ -1741,29 +1813,29 @@ footer a:hover {
        height: 60px;
     }
     .control-button {
+       min-width: 32px;
+       min-height: 32px;
+       width: 32px;
+       height: 32px;
+    }
+    .seek-button {
        min-width: 36px;
        min-height: 36px;
        width: 36px;
        height: 36px;
     }
-    .seek-button {
-       min-width: 40px;
-       min-height: 40px;
-       width: 40px;
-       height: 40px;
-    }
     .time-display {
-       font-size: 12px;
-       padding: 0 5px;
+       font-size: 11px;
+       padding: 0 3px;
     }
     .progress-bar-container {
        padding: 8px 0;
     }
     .volume-slider-container {
-       width: 60px;
+       width: 50px;
     }
     #volume-slider {
-       width: 60px;
+       width: 50px;
     }
     #theme-selector {
        height: 36px;
@@ -1784,42 +1856,185 @@ footer a:hover {
     }
     .bottom-controls {
        margin-bottom: 10px;
+       gap: 5px;
+       width: 100%;
+       padding: 0 15px;
+       box-sizing: border-box;
+    }
+    .left-controls, .right-controls {
+       gap: 5px;
+    }
+    .right-controls {
+       justify-content: space-between;
+       width: 100%;
+       margin-top: 5px;
+    }
+    .toggle-container {
+       display: flex;
+       flex-direction: column;
+       align-items: center;
+       font-size: 11px;
+       white-space: nowrap;
+       margin: 0 2px;
+       min-width: 60px;
     }
 }
 
 @media (max-width: 480px) {
+    .app-container {
+        padding: 0 10px;
+    }
+    
+    .page {
+        padding: 0 10px;
+    }
+    
+    #player-page.page {
+        padding: 0;
+        max-width: 100%;
+        width: 100%;
+        margin: 0;
+    }
+    
+    .player-content {
+        margin: 0;
+        width: 100%;
+        max-width: 100%;
+        border-radius: 0;
+    }
     .control-button {
-       min-width: 36px;
-       min-height: 36px;
-       width: 36px;
-       height: 36px;
-    }
-    
-    .seek-button {
-       min-width: 40px;
-       min-height: 40px;
-       width: 40px;
-       height: 40px;
-    }
-    
-    .time-display {
-       font-size: 12px;
-       padding: 0 5px;
-    }
-    
-    .progress-bar-container {
-       padding: 5px 0;
-    }
-    
-    .volume-slider-container {
-       width: 50px;
-    }
-    
-    #volume-slider {
-       width: 50px;
+       min-width: 28px;
+       min-height: 28px;
+       width: 28px;
+       height: 28px;
     }
     
     .bottom-controls {
-       margin-bottom: 5px;
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .left-controls {
+        justify-content: flex-start;
+        width: 100%;
+    }
+    
+    .right-controls {
+        justify-content: center;
+        padding: 0;
+    }
+}
+
+@media (max-width: 400px) {
+    .toggle-container {
+        min-width: 40px;
+        margin: 0 1px;
+        font-size: 9px;
+    }
+    
+    .right-controls {
+        gap: 4px;
+        padding: 0;
+    }
+    
+    .control-button {
+        min-width: 24px;
+        min-height: 24px;
+        width: 24px;
+        height: 24px;
+    }
+    
+    .seek-button {
+        min-width: 28px;
+        min-height: 28px;
+        width: 28px;
+        height: 28px;
+    }
+    
+    .switch {
+        width: 36px;
+        height: 18px;
+    }
+    
+    .slider:before {
+        height: 12px;
+        width: 12px;
+        left: 3px;
+        bottom: 3px;
+    }
+    
+    input:checked + .slider:before {
+        transform: translateX(18px);
+    }
+}
+
+@media (max-width: 480px) {
+    .seek-button {
+        min-width: 32px;
+        min-height: 32px;
+       width: 32px;
+       height: 32px;
+    }
+    
+    .time-display {
+       font-size: 10px;
+       padding: 0 2px;
+    }
+    
+    .progress-bar-container {
+       padding: 3px 0;
+    }
+    
+    .volume-slider-container {
+       width: 40px;
+    }
+    
+    #volume-slider {
+       width: 40px;
+    }
+    
+    .bottom-controls {
+       margin-bottom: 0;
+       gap: 3px;
+       width: 100%;
+       padding: 0 15px;
+       box-sizing: border-box;
+    }
+    
+    .left-controls, .right-controls {
+       gap: 3px;
+    }
+    .right-controls {
+       justify-content: space-between;
+       width: 100%;
+       margin-top: 5px;
+    }
+    
+    .toggle-container {
+       font-size: 10px;
+    }
+    
+    /* Toggle containers are now visible on mobile */
+    
+    .switch {
+       width: 40px;
+       height: 20px;
+    }
+    
+    .slider:before {
+       height: 14px;
+       width: 14px;
+       left: 3px;
+       bottom: 3px;
+    }
+    
+    input:checked + .slider:before {
+       transform: translateX(20px);
+    }
+    
+    .settings-menu {
+       bottom: 50px;
+       right: 5px;
+       max-width: 250px;
     }
 }
