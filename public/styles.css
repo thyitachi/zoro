@@ -912,6 +912,14 @@ input:checked + .slider:before {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
+@media (max-width: 768px) {
+   .player-content {
+       margin: 10px auto;
+       border-radius: 8px;
+       max-width: 100%;
+   }
+}
+
 .video-controls-container.hidden {
     opacity: 0;
     pointer-events: none;
@@ -1602,158 +1610,216 @@ footer a:hover {
 }
 
 @media (max-width: 768px) {
-   .app-container {
-      padding: 0 10px;
-   }
-   .site-header {
-      flex-direction: row;
-      justify-content: space-between;
-      gap: 15px;
-   }
-   .mobile-controls {
-      display: flex;
-      align-items: center;
-   }
-   .menu-toggle, .mobile-search-btn {
-      display: block;
-   }
-   nav {
-      display: none;
-      flex-direction: column;
-      width: 100%;
-   }
-   nav.active {
-      display: flex;
-   }
-   .header-right {
-      justify-content: center;
-      gap: 10px;
-   }
-   .logo {
-      height: 50px;
-   }
-   nav a {
-      font-size: 0.9rem;
-   }
-   .grid {
-      grid-template-columns: repeat(2, 1fr);
-      gap: 15px;
-   }
-   #continue-watching {
-      grid-template-columns: repeat(2, 1fr);
-      gap: 15px;
-   }
-   .episode-grid {
-      grid-template-columns: repeat(2, 1fr);
-   }
-   .search-filters {
-      flex-direction: column;
-      align-items: stretch;
-   }
-   #searchInput, .search-filters select, .search-filters button {
-      width: 100%;
-   }
-   .bottom-controls {
-      flex-direction: column;
-      align-items: stretch;
-   }
-   .left-controls, .right-controls {
-      justify-content: center;
-   }
-   .settings-menu, .cc-menu {
-      width: 100%;
-      max-width: 300px;
-      right: 10px;
-   }
-   .quality-list {
-      grid-template-columns: 1fr;
-   }
-   .watchlist-controls-header, .status-filter-group {
-      flex-direction: column;
-      align-items: stretch;
-   }
-   .status-filter-group {
-      flex-direction: row;
-      overflow-x: auto;
-   }
-   .sidebar {
-      width: 100%;
-      max-width: 100%;
-      box-sizing: border-box;
-      overflow-x: hidden;
-   }
+    .app-container {
+       padding: 0 10px;
+    }
+    .site-header {
+       flex-direction: row;
+       justify-content: space-between;
+       gap: 15px;
+    }
+    .mobile-controls {
+       display: flex;
+       align-items: center;
+    }
+    .menu-toggle, .mobile-search-btn {
+       display: block;
+    }
+    nav {
+       display: none;
+       flex-direction: column;
+       width: 100%;
+    }
+    nav.active {
+       display: flex;
+    }
+    .header-right {
+       justify-content: center;
+       gap: 10px;
+    }
+    .logo {
+       height: 50px;
+    }
+    nav a {
+       font-size: 0.9rem;
+    }
+    .grid {
+       grid-template-columns: repeat(2, 1fr);
+       gap: 15px;
+    }
+    #continue-watching {
+       grid-template-columns: repeat(2, 1fr);
+       gap: 15px;
+    }
+    .episode-grid {
+       grid-template-columns: repeat(2, 1fr);
+    }
+    .search-filters {
+       flex-direction: column;
+       align-items: stretch;
+    }
+    #searchInput, .search-filters select, .search-filters button {
+       width: 100%;
+    }
+    .bottom-controls {
+       flex-direction: column;
+       align-items: stretch;
+       margin-bottom: 10px;
+    }
+    .left-controls, .right-controls {
+       justify-content: center;
+    }
+    .progress-bar-container {
+       padding: 8px 0;
+    }
+    .time-display {
+       font-size: 12px;
+       padding: 0 5px;
+    }
+    .control-button {
+       min-width: 36px;
+       min-height: 36px;
+       width: 36px;
+       height: 36px;
+    }
+    .seek-button {
+       min-width: 40px;
+       min-height: 40px;
+       width: 40px;
+       height: 40px;
+    }
+    .volume-slider-container {
+       width: 60px;
+    }
+    #volume-slider {
+       width: 60px;
+    }
+    .settings-menu, .cc-menu {
+       width: 100%;
+       max-width: 300px;
+       right: 10px;
+    }
+    .quality-list {
+       grid-template-columns: 1fr;
+    }
+    .watchlist-controls-header, .status-filter-group {
+       flex-direction: column;
+       align-items: stretch;
+    }
+    .status-filter-group {
+       flex-direction: row;
+       overflow-x: auto;
+    }
+    .sidebar {
+       width: 100%;
+       max-width: 100%;
+       box-sizing: border-box;
+       overflow-x: hidden;
+    }
 }
 
 @media (max-width: 576px) {
-   body {
-      font-size: 14px;
-   }
-   .grid {
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-   }
-   .grid-item {
-      width: 100%;
-      box-sizing: border-box;
-   }
-   #continue-watching {
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-   }
-   .episode-grid {
-      grid-template-columns: repeat(2, 1fr);
-   }
-   .logo {
-      height: 60px;
-   }
-   .control-button, .seek-button {
-      width: 36px;
-      height: 36px;
-   }
-   #theme-selector {
-      height: 36px;
-      font-size: 0.85rem;
-   }
-   .day-button {
-      padding: 8px;
-      min-width: 60px;
-   }
-   .day-button .day-name {
-      font-size: 0.85rem;
-   }
-   .day-button .day-date {
-      font-size: 0.7rem;
-   }
-   video::cue {
-      font-size: 1.2rem;
-   }
+    body {
+       font-size: 14px;
+    }
+    .grid {
+       grid-template-columns: repeat(2, 1fr);
+       gap: 10px;
+    }
+    .grid-item {
+       width: 100%;
+       box-sizing: border-box;
+    }
+    #continue-watching {
+       grid-template-columns: repeat(2, 1fr);
+       gap: 10px;
+    }
+    .episode-grid {
+       grid-template-columns: repeat(2, 1fr);
+    }
+    .logo {
+       height: 60px;
+    }
+    .control-button {
+       min-width: 36px;
+       min-height: 36px;
+       width: 36px;
+       height: 36px;
+    }
+    .seek-button {
+       min-width: 40px;
+       min-height: 40px;
+       width: 40px;
+       height: 40px;
+    }
+    .time-display {
+       font-size: 12px;
+       padding: 0 5px;
+    }
+    .progress-bar-container {
+       padding: 8px 0;
+    }
+    .volume-slider-container {
+       width: 60px;
+    }
+    #volume-slider {
+       width: 60px;
+    }
+    #theme-selector {
+       height: 36px;
+       font-size: 0.85rem;
+    }
+    .day-button {
+       padding: 8px;
+       min-width: 60px;
+    }
+    .day-button .day-name {
+       font-size: 0.85rem;
+    }
+    .day-button .day-date {
+       font-size: 0.7rem;
+    }
+    video::cue {
+       font-size: 1.2rem;
+    }
+    .bottom-controls {
+       margin-bottom: 10px;
+    }
 }
 
 @media (max-width: 480px) {
-   .control-button {
-      min-width: 48px;
-      min-height: 48px;
-      width: 48px;
-      height: 48px;
-   }
-   
-   .seek-button {
-      min-width: 56px;
-      min-height: 56px;
-      width: 56px;
-      height: 56px;
-   }
-   
-   .time-display {
-      font-size: 16px;
-      padding: 0 15px;
-   }
-   
-   .volume-slider-container {
-      width: 100px;
-   }
-   
-   #volume-slider {
-      width: 100px;
-   }
+    .control-button {
+       min-width: 36px;
+       min-height: 36px;
+       width: 36px;
+       height: 36px;
+    }
+    
+    .seek-button {
+       min-width: 40px;
+       min-height: 40px;
+       width: 40px;
+       height: 40px;
+    }
+    
+    .time-display {
+       font-size: 12px;
+       padding: 0 5px;
+    }
+    
+    .progress-bar-container {
+       padding: 5px 0;
+    }
+    
+    .volume-slider-container {
+       width: 50px;
+    }
+    
+    #volume-slider {
+       width: 50px;
+    }
+    
+    .bottom-controls {
+       margin-bottom: 5px;
+    }
 }
