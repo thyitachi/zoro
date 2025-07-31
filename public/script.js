@@ -821,8 +821,6 @@ async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
       const watchedEpisodes = await watchedResponse.json();
       const { inWatchlist } = await watchlistResponse.json();
       
-      displayEpisodes(sortedEpisodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist);
-      
       // Determine which episode to play:
       // 1. If a specific episode is requested, play that
       // 2. If user has watched episodes, play the last watched episode
@@ -838,6 +836,9 @@ async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
       } else {
          epToPlay = sortedEpisodes[0];
       }
+      
+      // Pass the episode to play to displayEpisodes so it can mark it as active
+      displayEpisodes(sortedEpisodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist, epToPlay);
       
       if (epToPlay) {
          fetchVideoLinks(showId, epToPlay, showMeta, mode);
@@ -871,7 +872,7 @@ function createEpisodeJumpControls(episodes) {
     `;
 }
 
-function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist) {
+function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist, currentEpisode = null) {
    const page = document.getElementById('player-page');
    const jumpControls = createEpisodeJumpControls(episodes);
 
@@ -899,7 +900,7 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
          ${jumpControls}
          <div id="episode-grid-player" class="episode-grid">
             ${episodes.map(ep => `
-               <div class="result-item ${watchedEpisodes.includes(ep.toString()) ? 'watched' : ''}" data-episode="${ep}">Episode ${ep}</div>
+               <div class="result-item ${watchedEpisodes.includes(ep.toString()) ? 'watched' : ''} ${currentEpisode === ep.toString() ? 'active' : ''}" data-episode="${ep}">Episode ${ep}</div>
             `).join('') || `<p class="error">No ${mode.toUpperCase()} episodes found</p>`}
          </div>
       </div>
@@ -996,14 +997,7 @@ async function fetchVideoLinks(showId, episodeNumber, showMeta, mode = 'sub') {
    playerContainer.innerHTML = '<div class="loading"></div>';
    playerPageContent.insertBefore(playerContainer, document.querySelector('.ep-jump-controls, #episode-grid-player'));
    
-   // Update episode selection - remove all active classes first
-   document.querySelectorAll('#episode-grid-player .result-item').forEach(item => {
-      item.classList.remove('active');
-   });
-   
-   // Add active class to the current episode
-   const activeEpItem = document.querySelector(`#episode-grid-player .result-item[data-episode='${episodeNumber}']`);
-   if (activeEpItem) activeEpItem.classList.add('active');
+   // The active class is now set in displayEpisodes, so we don't need to modify it here
    try {
       const [sourcesResponse, settingsResponse, progressResponse] = await Promise.all([
          fetch(`/video?showId=${encodeURIComponent(showId)}&episodeNumber=${encodeURIComponent(episodeNumber)}&mode=${mode}`),

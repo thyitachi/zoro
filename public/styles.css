@@ -613,7 +613,7 @@ h4 {
 }
 
 .result-item.active {
-   background-color: #4CAF50; /* Green for active/selected episode */
+   background-color: #8A2BE2; /* Purple for active/selected episode */
 }
 
 .result-item.watched {
