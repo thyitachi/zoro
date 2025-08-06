@@ -4,8 +4,8 @@ A web application for streaming anime.
 
 ## Important Notes
 
-- The application uses SQLite for data storage. The database is stored in the root directory as `anime.db`.
-- The application includes `/backup-db` and `/restore-db` endpoints that can be used for a simple backup solution.
+- The application uses Firebase for user data (watch history, watchlist, settings) and does not use any local SQLite database.
+- History and continue watching are available only when the user is logged in.
 
 ## Local Development
 

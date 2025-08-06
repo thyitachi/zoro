@@ -17,6 +17,11 @@
       <title>ani-web</title>
       <link rel="stylesheet" href="styles.css" media="print" onload="this.media='all'">
       <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.5/dist/hls.min.js"></script>
+      <!-- Firebase SDK -->
+      <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+      <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+      <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+      <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
    </head>
    <body>
       <div class="app-container" role="main">
@@ -161,18 +166,6 @@
                         <label for="eraseWatchlistToggle">Erase current watchlist before import</label>
                      </div>
                      <div id="importStatus"></div>
-                  </div>
-                  <div class="backup-restore-section">
-                     <h4>Backup & Restore Database</h4>
-                     <p>Save your entire watch history, watchlist, and settings.</p>
-                     <div class="backup-restore-controls">
-                        <a href="/backup-db" class="backup-btn" download="ani-web-backup.db">Backup Database</a>
-                        <div class="restore-control">
-                           <input type="file" id="restoreFile" accept=".db" aria-label="Restore database file">
-                           <button id="restoreDbBtn">Restore from File</button>
-                        </div>
-                     </div>
-                     <div id="restoreStatus"></div>
                   </div>
                </div>
             </div>

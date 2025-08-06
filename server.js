@@ -1,18 +1,13 @@
 const express = require('express');
 const axios = require('axios');
-const sqlite3 = require('sqlite3').verbose();
 const { parseString } = require('xml2js');
 const NodeCache = require('node-cache');
-const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 const apiCache = new NodeCache({ stdTTL: 3600 });
-// Use local directory for SQLite database
-const dbPath = path.join(__dirname, 'anime.db');
-let db;
 
 // Use local directory for profile pictures
 const profilePicsDir = path.join(__dirname, 'public', 'profile_pics');
@@ -21,58 +16,19 @@ if (!fs.existsSync(profilePicsDir)) {
     fs.mkdirSync(profilePicsDir, { recursive: true });
 }
 
-function initializeDatabase() {
-   db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-         console.error('Database opening error: ', err.message);
-      } else {
-         console.log('Connected to SQLite database.');
-         db.serialize(() => {
-            db.run(`CREATE TABLE IF NOT EXISTS profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, picture_path TEXT)`);
-            db.get(`SELECT COUNT(*) as count FROM profiles`, (err, row) => {
-               if (row && row.count === 0) {
-                  db.run(`INSERT INTO profiles (name) VALUES ('Default')`, (err) => {
-                     if (!err) console.log('Created default profile.');
-                  });
-               }
-            });
-            db.run(`CREATE TABLE IF NOT EXISTS watchlist (profile_id INTEGER NOT NULL, id TEXT NOT NULL, name TEXT, thumbnail TEXT, status TEXT, PRIMARY KEY (profile_id, id))`);
-            db.run(`CREATE TABLE IF NOT EXISTS watched_episodes (profile_id INTEGER NOT NULL, showId TEXT NOT NULL, episodeNumber TEXT NOT NULL, watchedAt DATETIME DEFAULT CURRENT_TIMESTAMP, currentTime REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY (profile_id, showId, episodeNumber))`);
-            db.run(`CREATE TABLE IF NOT EXISTS settings (profile_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY (profile_id, key))`);
-            db.run(`CREATE TABLE IF NOT EXISTS shows_meta (id TEXT PRIMARY KEY, name TEXT, thumbnail TEXT)`);
-         });
-      }
-   });
-}
-initializeDatabase();
-
-const profilePicStorage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, profilePicsDir);
-    },
-    filename: function (req, file, cb) {
-        const profileId = req.params.id;
-        const extension = path.extname(file.originalname);
-        cb(null, `${profileId}${extension}`);
-    }
-});
-const profilePicUpload = multer({ storage: profilePicStorage });
-
-const dbUploadStorage = multer.diskStorage({
-   destination: function (req, file, cb) {
-      // Use local directory for database uploads
-      const uploadDir = __dirname;
-      cb(null, uploadDir);
-   },
-   filename: function (req, file, cb) {
-      cb(null, 'anime.db.temp');
-   }
-});
-const dbUpload = multer({ storage: dbUploadStorage });
-
+// NOTE: Local profiles/SQLite have been removed. App relies on Firebase user only.
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 app.get('/favicon.ico', (req, res) => res.status(204).send());
+
+// Middleware to extract Firebase user ID from request headers (no local profile support)
+app.use((req, res, next) => {
+    const userId = req.headers['x-user-id'] || req.headers['X-User-ID'] || req.headers['x-User-Id'];
+    if (userId) {
+        req.userId = userId;
+    }
+    next();
+});
 
 // Add root route handler to serve index.html
 app.get('/', (req, res) => {
@@ -296,21 +252,40 @@ app.get('/episodes', async (req, res) => {
 
 app.get('/video', async (req, res) => {
 	const { showId, episodeNumber, mode = 'sub' } = req.query;
+	
+	// Validate required parameters
+	if (!showId || !episodeNumber) {
+		return res.status(400).json({ error: 'Missing required parameters: showId and episodeNumber are required' });
+	}
+	
 	const cacheKey = `video-${showId}-${episodeNumber}-${mode}`;
 	
 	if (apiCache.has(cacheKey)) {
+		console.log(`Serving cached video sources for ${showId} episode ${episodeNumber}`);
 		return res.json(apiCache.get(cacheKey));
 	}
 
 	const graphqlQuery = `query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) { sourceUrls } }`;
 	try {
+		console.log(`Fetching video sources for ${showId} episode ${episodeNumber} mode ${mode}`);
 		const { data } = await axios.get(apiEndpoint, {
 			headers: { 'User-Agent': userAgent, 'Referer': referer },
 			params: { query: graphqlQuery, variables: JSON.stringify({ showId, translationType: mode, episodeString: episodeNumber }) },
 			timeout: 15000
 		});
 
+		// Check if we have valid data
+		if (!data || !data.data || !data.data.episode || !data.data.episode.sourceUrls) {
+			console.error(`Invalid response structure for ${showId} episode ${episodeNumber}`);
+			return res.status(500).json({ error: 'Invalid API response structure' });
+		}
+
 		const sources = data.data.episode.sourceUrls.filter(s => s.sourceUrl.startsWith('--')).sort((a, b) => b.priority - a.priority);
+		
+		if (sources.length === 0) {
+			console.error(`No sources found for ${showId} episode ${episodeNumber}`);
+			return res.status(404).json({ error: 'No video sources found' });
+		}
 		
 		const trustedSources = ['Default', 'wixmp', 'Yt-mp4', 'S-mp4', 'Luf-Mp4'];
 
@@ -331,23 +306,31 @@ app.get('/video', async (req, res) => {
 				let subtitles = [];
 				if (decryptedUrl.includes('/clock.json')) {
 					const finalUrl = new URL(decryptedUrl, apiBaseUrl).href;
-					const { data: clockData } = await axios.get(finalUrl, {
-						headers: { 'Referer': referer, 'User-Agent': userAgent },
-						timeout: 10000
-					});
-					if (clockData.links && clockData.links.length > 0) {
-						videoLinks = clockData.links[0].hls ? await (async (u, h) => {
-							try {
-								const { data: d } = await axios.get(u, { headers: h, timeout: 10000 });
-								const l = d.split('\n'), q = [];
-								for (let i = 0; i < l.length; i++)
-									if (l[i].startsWith('#EXT-X-STREAM-INF')) {
-										const rM = l[i].match(/RESOLUTION=\d+x(\d+)/);
-										q.push({ resolutionStr: rM ? `${rM[1]}p` : 'Auto', link: new URL(l[i + 1], u).href, hls: true, headers: h });
-									} return q.length > 0 ? q : [{ resolutionStr: 'auto', link: u, hls: true, headers: h }];
-							} catch (e) { return []; }
-						})(clockData.links[0].link, clockData.links[0].headers) : clockData.links;
-						subtitles = clockData.links[0].subtitles || [];
+					try {
+						const { data: clockData } = await axios.get(finalUrl, {
+							headers: { 'Referer': referer, 'User-Agent': userAgent },
+							timeout: 10000
+						});
+						if (clockData.links && clockData.links.length > 0) {
+							videoLinks = clockData.links[0].hls ? await (async (u, h) => {
+								try {
+									const { data: d } = await axios.get(u, { headers: h, timeout: 10000 });
+									const l = d.split('\n'), q = [];
+									for (let i = 0; i < l.length; i++)
+										if (l[i].startsWith('#EXT-X-STREAM-INF')) {
+											const rM = l[i].match(/RESOLUTION=\d+x(\d+)/);
+											q.push({ resolutionStr: rM ? `${rM[1]}p` : 'Auto', link: new URL(l[i + 1], u).href, hls: true, headers: h });
+										} return q.length > 0 ? q : [{ resolutionStr: 'auto', link: u, hls: true, headers: h }];
+								} catch (e) { 
+									console.error(`Error parsing HLS manifest: ${e.message}`);
+									return []; 
+								}
+							})(clockData.links[0].link, clockData.links[0].headers) : clockData.links;
+							subtitles = clockData.links[0].subtitles || [];
+						}
+					} catch (clockError) {
+						console.error(`Error fetching clock data: ${clockError.message}`);
+						// Continue to try other sources
 					}
                 } else if (decryptedUrl.includes('repackager.wixmp.com')) {
                     const urlTemplate = decryptedUrl.replace('repackager.wixmp.com/', '').replace(/\.urlset.*/, '');
@@ -373,6 +356,7 @@ app.get('/video', async (req, res) => {
 				}
                 return null;
 			} catch (e) {
+				console.error(`Error processing source ${source.sourceName}: ${e.message}`);
                 return null;
             }
         })());
@@ -383,13 +367,16 @@ app.get('/video', async (req, res) => {
             .map(result => result.value);
 
 		if (availableSources.length > 0) {
+            console.log(`Found ${availableSources.length} playable sources for ${showId} episode ${episodeNumber}`);
             apiCache.set(cacheKey, availableSources, 300);
             res.json(availableSources);
         } else {
-            res.status(404).send('No playable video URLs found.');
+            console.error(`No playable video URLs found for ${showId} episode ${episodeNumber}`);
+            res.status(404).json({ error: 'No playable video URLs found' });
         }
 	} catch (e) {
-		res.status(500).send(`Error fetching video data: ${e.message}`);
+		console.error(`Error fetching video data for ${showId} episode ${episodeNumber}: ${e.message}`);
+		res.status(500).json({ error: `Error fetching video data: ${e.message}` });
 	}
 });
 
@@ -419,7 +406,26 @@ app.get('/proxy', async (req, res) => {
     //console.log(`[${requestId}] /proxy: Client Request Headers:`, JSON.stringify(req.headers, null, 2));
 
     const { url, referer: dynamicReferer } = req.query;
+    
+    // Validate required parameters
+    if (!url) {
+        return res.status(400).json({ 
+            error: 'Missing URL parameter', 
+            details: 'The url parameter is required for proxy requests' 
+        });
+    }
+    
     try {
+        // Validate URL format
+        try {
+            new URL(url);
+        } catch (urlError) {
+            return res.status(400).json({ 
+                error: 'Invalid URL format', 
+                details: urlError.message 
+            });
+        }
+        
         const headers = { 
             'User-Agent': userAgent, 
             'Accept': '*/*',
@@ -436,68 +442,109 @@ app.get('/proxy', async (req, res) => {
         //console.log(`[${requestId}] /proxy: Sending Headers to Remote:`, JSON.stringify(headers, null, 2));
 
         if (url.includes('.m3u8')) {
-            const response = await axios.get(url, { headers, responseType: 'text', timeout: 15000 });
-            
-            console.log(`[${requestId}] /proxy: m3u8 remote response status: ${response.status}`);
-            
-            const baseUrl = new URL(url);
-            const rewritten = response.data.split('\n').map(l =>
-                (l.trim().length > 0 && !l.startsWith('#'))
-                    ? `/proxy?url=${encodeURIComponent(new URL(l, baseUrl).href)}&referer=${encodeURIComponent(dynamicReferer || referer)}`
-                    : l
-            ).join('\n');
-            res.set('Content-Type', 'application/vnd.apple.mpegurl').send(rewritten);
-            //console.log(`[${requestId}] /proxy: Finished processing m3u8.`);
-        } else {
-            const streamResponse = await axios({ 
-                method: 'get', 
-                url, 
-                responseType: 'stream', 
-                headers, 
-                timeout: 20000 
-            });
-
-            //console.log(`[${requestId}] /proxy: Video chunk remote response status: ${streamResponse.status}`);
-            
-            res.status(streamResponse.status);
-            res.set(streamResponse.headers);
-            
-            // --- CHANGE: Added listeners to the client connection to handle aborts gracefully ---
-            req.on('close', () => {
-                //console.log(`[${requestId}] /proxy: Client closed connection. Aborting remote request.`);
-                streamResponse.data.destroy();
-            });
-
-            streamResponse.data.pipe(res);
-
-            streamResponse.data.on('error', (err) => {
-                // Ignore ECONNRESET, as it's the expected error when the client aborts a request.
-                if (err.code !== 'ECONNRESET') {
-                    //console.error(`[${requestId}] /proxy: Error on remote stream:`, err);
-                }
+            try {
+                const response = await axios.get(url, { headers, responseType: 'text', timeout: 15000 });
+                
+                console.log(`[${requestId}] /proxy: m3u8 remote response status: ${response.status}`);
+                
+                const baseUrl = new URL(url);
+                const rewritten = response.data.split('\n').map(l =>
+                    (l.trim().length > 0 && !l.startsWith('#'))
+                        ? `/proxy?url=${encodeURIComponent(new URL(l, baseUrl).href)}&referer=${encodeURIComponent(dynamicReferer || referer)}`
+                        : l
+                ).join('\n');
+                res.set('Content-Type', 'application/vnd.apple.mpegurl').send(rewritten);
+                //console.log(`[${requestId}] /proxy: Finished processing m3u8.`);
+            } catch (m3u8Error) {
+                console.error(`[${requestId}] /proxy: Error processing m3u8:`, m3u8Error);
                 if (!res.headersSent) {
-                    res.status(500).send('Error during streaming from remote.');
+                    res.status(500).json({
+                        error: 'Failed to process m3u8 playlist',
+                        details: m3u8Error.message
+                    });
                 }
-                res.end();
-            });
+            }
+        } else {
+            try {
+                const streamResponse = await axios({ 
+                    method: 'get', 
+                    url, 
+                    responseType: 'stream', 
+                    headers, 
+                    timeout: 20000 
+                });
 
-            streamResponse.data.on('end', () => {
-                //console.log(`[${requestId}] /proxy: Remote stream finished successfully.`);
-            });
+                //console.log(`[${requestId}] /proxy: Video chunk remote response status: ${streamResponse.status}`);
+                
+                res.status(streamResponse.status);
+                res.set(streamResponse.headers);
+                
+                // --- CHANGE: Added listeners to the client connection to handle aborts gracefully ---
+                req.on('close', () => {
+                    //console.log(`[${requestId}] /proxy: Client closed connection. Aborting remote request.`);
+                    streamResponse.data.destroy();
+                });
+
+                streamResponse.data.pipe(res);
+
+                streamResponse.data.on('error', (err) => {
+                    // Ignore ECONNRESET, as it's the expected error when the client aborts a request.
+                    if (err.code !== 'ECONNRESET') {
+                        console.error(`[${requestId}] /proxy: Error on remote stream:`, err);
+                    }
+                    if (!res.headersSent) {
+                        res.status(500).json({
+                            error: 'Error during streaming from remote',
+                            details: err.message
+                        });
+                    }
+                    res.end();
+                });
+
+                streamResponse.data.on('end', () => {
+                    //console.log(`[${requestId}] /proxy: Remote stream finished successfully.`);
+                });
+            } catch (streamError) {
+                console.error(`[${requestId}] /proxy: Error setting up stream:`, streamError);
+                if (!res.headersSent) {
+                    res.status(500).json({
+                        error: 'Failed to set up video stream',
+                        details: streamError.message
+                    });
+                }
+            }
         }
     } catch (e) {
+        console.error(`[${requestId}] /proxy: Error processing request:`, e);
+        
         if (e.response) {
             //console.error(`[${requestId}] /proxy: AXIOS ERROR for ${url}: Status ${e.response.status}`);
             //console.error(`[${requestId}] /proxy: AXIOS ERROR Headers:`, JSON.stringify(e.response.headers, null, 2));
             const errorBody = await streamToString(e.response.data).catch(() => 'Could not read error stream.');
             //console.error(`[${requestId}] /proxy: AXIOS ERROR Data:`, errorBody);
-            if (!res.headersSent) res.status(e.response.status).send(`Proxy error: ${e.message}`);
+            if (!res.headersSent) {
+                res.status(e.response.status).json({
+                    error: 'Remote server error',
+                    status: e.response.status,
+                    details: e.message
+                });
+            }
         } else if (e.request) {
             //console.error(`[${requestId}] /proxy: AXIOS NETWORK ERROR for ${url}: No response received.`, e.message);
-            if (!res.headersSent) res.status(504).send(`Proxy error: Gateway timeout.`);
+            if (!res.headersSent) {
+                res.status(504).json({
+                    error: 'Gateway timeout',
+                    details: 'No response received from remote server'
+                });
+            }
         } else {
             //console.error(`[${requestId}] /proxy: UNKNOWN ERROR for ${url}: ${e.message}`);
-            if (!res.headersSent) res.status(500).send(`Proxy error: ${e.message}`);
+            if (!res.headersSent) {
+                res.status(500).json({
+                    error: 'Proxy error',
+                    details: e.message
+                });
+            }
         }
         
         if (res.writable && !res.headersSent) {
@@ -509,27 +556,58 @@ app.get('/proxy', async (req, res) => {
 });
 
 app.get('/subtitle-proxy', async (req, res) => {
+    const { url } = req.query;
+    
+    // Validate required parameters
+    if (!url) {
+        return res.status(400).json({ 
+            error: 'Missing URL parameter', 
+            details: 'The url parameter is required for subtitle proxy requests' 
+        });
+    }
+    
     try {
-        const response = await axios.get(req.query.url, { responseType: 'text', timeout: 10000 });
+        // Validate URL format
+        try {
+            new URL(url);
+        } catch (urlError) {
+            return res.status(400).json({ 
+                error: 'Invalid URL format', 
+                details: urlError.message 
+            });
+        }
+        
+        const response = await axios.get(url, { responseType: 'text', timeout: 10000 });
         res.set('Content-Type', 'text/vtt; charset=utf-8').send(response.data);
     } catch (error) {
-        res.status(500).send(`Proxy error: ${error.message}`);
+        console.error('Error fetching subtitle:', error);
+        
+        if (error.response) {
+            // The request was made and the server responded with a status code
+            // that falls out of the range of 2xx
+            res.status(error.response.status).json({
+                error: 'Remote server error',
+                status: error.response.status,
+                details: error.message
+            });
+        } else if (error.request) {
+            // The request was made but no response was received
+            res.status(504).json({
+                error: 'Gateway timeout',
+                details: 'No response received from subtitle server'
+            });
+        } else {
+            // Something happened in setting up the request that triggered an Error
+            res.status(500).json({
+                error: 'Subtitle proxy error',
+                details: error.message
+            });
+        }
     }
 });
 
-app.get('/api/profiles', (req, res) => {
-    db.all('SELECT * FROM profiles ORDER BY name', [], (err, rows) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json(rows);
-    });
-});
-app.get('/api/profiles/:id', (req, res) => {
-    db.get('SELECT * FROM profiles WHERE id = ?', [req.params.id], (err, row) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        if (!row) return res.status(404).json({ error: 'Profile not found' });
-        res.json(row);
-    });
-});
+
+
 
 app.get('/schedule-info/:showId', async (req, res) => {
     const { showId } = req.params;
@@ -586,265 +664,19 @@ app.get('/schedule-info/:showId', async (req, res) => {
     }
 });
 
-app.post('/api/profiles', (req, res) => {
-    const { name } = req.body;
-    if (!name || name.trim().length === 0) {
-        return res.status(400).json({ error: 'Profile name cannot be empty.' });
-    }
-    db.run('INSERT INTO profiles (name) VALUES (?)', [name.trim()], function(err) {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to create profile. Name might already exist.' });
-        }
-        res.json({ id: this.lastID, name: name.trim() });
-    });
-});
-app.post('/api/profiles/:id/picture', profilePicUpload.single('profilePic'), (req, res) => {
-    const profileId = req.params.id;
-    if (!req.file) {
-        return res.status(400).json({ error: 'No picture uploaded.' });
-    }
-    
-    // Handle profile picture path differently in production
-    let picturePath;
-    // The file is already in the right place in the public directory
-    picturePath = `/profile_pics/${req.file.filename}`;
-    
-    db.run('UPDATE profiles SET picture_path = ? WHERE id = ?', [picturePath, profileId], function (err) {
-        if (err) return res.status(500).json({ error: 'Failed to update profile picture in DB.' });
-        res.json({ success: true, path: picturePath });
-    });
-});
-app.put('/api/profiles/:id', (req, res) => {
-    const { name } = req.body;
-    const { id } = req.params;
-    if (!name || name.trim().length === 0) {
-        return res.status(400).json({ error: 'Profile name cannot be empty.' });
-    }
-    db.run('UPDATE profiles SET name = ? WHERE id = ?', [name.trim(), id], function(err) {
-        if (err) return res.status(500).json({ error: 'Failed to update profile. Name might already exist.' });
-        if (this.changes === 0) return res.status(404).json({ error: 'Profile not found.' });
-        res.json({ success: true });
-    });
-});
-app.delete('/api/profiles/:id', (req, res) => {
-    const { id } = req.params;
-    db.get('SELECT COUNT(*) as count FROM profiles', (err, row) => {
-        if (row.count <= 1) {
-            return res.status(400).json({ error: 'Cannot delete the last profile.' });
-        }
-        db.serialize(() => {
-            db.run('BEGIN TRANSACTION');
-            db.run('DELETE FROM watchlist WHERE profile_id = ?', [id]);
-            db.run('DELETE FROM watched_episodes WHERE profile_id = ?', [id]);
-            db.run('DELETE FROM settings WHERE profile_id = ?', [id]);
-            db.run('DELETE FROM profiles WHERE id = ?', [id], (err) => {
-                if (err) {
-                    db.run('ROLLBACK');
-                    return res.status(500).json({ error: 'Failed to delete profile.' });
-                }
-                db.run('COMMIT');
-                res.json({ success: true });
-            });
-        });
-    });
-});
 
-app.post('/import/mal-xml', async (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { xml, erase } = req.body;
-    if (!xml) {
-        return res.status(400).json({ error: 'XML content is required' });
-    }
-    if (erase) {
-        await new Promise((resolve, reject) => {
-            db.run(`DELETE FROM watchlist WHERE profile_id = ?`, [profileId], (err) => { if (err) reject(new Error('DB error on erase.')); else resolve(); });
-        });
-    }
-    parseString(xml, async (err, result) => {
-        if (err || !result || !result.myanimelist || !result.myanimelist.anime) {
-            return res.status(400).json({ error: 'Invalid or empty MyAnimeList XML file.' });
-        }
-        const animeList = result.myanimelist.anime;
-        let importedCount = 0;
-        let skippedCount = 0;
-        for (const item of animeList) {
-            try {
-                const title = item.series_title[0];
-                const malStatus = item.my_status[0];
-                const searchResponse = await axios.get(apiEndpoint, {
-                    headers: { 'User-Agent': userAgent, 'Referer': referer },
-                    params: { query: showsQuery, variables: JSON.stringify({ search: { query: title }, limit: 1 }) },
-                    timeout: 5000
-                });
-                const foundShow = searchResponse.data?.data?.shows?.edges[0];
-                if (foundShow) {
-                    await new Promise((resolve, reject) => {
-                        db.run(`INSERT OR REPLACE INTO watchlist (profile_id, id, name, thumbnail, status) VALUES (?, ?, ?, ?, ?)`,
-                            [profileId, foundShow._id, foundShow.name, deobfuscateUrl(foundShow.thumbnail), malStatus],
-                            (err) => { if (err) reject(err); else { importedCount++; resolve(); } }
-                        );
-                    });
-                } else { skippedCount++; }
-            } catch (searchError) { skippedCount++; }
-        }
-        res.json({ imported: importedCount, skipped: skippedCount });
-    });
-});
-app.post('/watchlist/add', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { id, name, thumbnail, status } = req.body;
-    const finalThumbnail = deobfuscateUrl(thumbnail || '');
-    db.run(`INSERT OR REPLACE INTO watchlist (profile_id, id, name, thumbnail, status) VALUES (?, ?, ?, ?, ?)`,
-        [profileId, id, name, finalThumbnail, status || 'Watching'],
-        (err) => err ? res.status(500).json({ error: 'DB error' }) : res.json({ success: true })
-    );
-});
-app.get('/watchlist/check/:showId', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    db.get('SELECT EXISTS(SELECT 1 FROM watchlist WHERE profile_id = ? AND id = ?) as inWatchlist',
-        [profileId, req.params.showId],
-        (err, row) => err ? res.status(500).json({ error: 'DB error' }) : res.json({ inWatchlist: !!row.inWatchlist })
-    );
-});
-app.post('/watchlist/status', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { id, status } = req.body;
-    db.run(`UPDATE watchlist SET status = ? WHERE profile_id = ? AND id = ?`,
-        [status, profileId, id],
-        (err) => err ? res.status(500).json({ error: 'DB error' }) : res.json({ success: true })
-    );
-});
-app.get('/watchlist', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
 
-    const sort = req.query.sort || 'last_added';
-    let orderByClause;
 
-    switch (sort) {
-        case 'name_asc':
-            orderByClause = 'ORDER BY name ASC';
-            break;
-        case 'name_desc':
-            orderByClause = 'ORDER BY name DESC';
-            break;
-        case 'last_added':
-        default:
-            orderByClause = 'ORDER BY ROWID DESC';
-            break;
-    }
 
-    db.all(`SELECT * FROM watchlist WHERE profile_id = ? ${orderByClause}`, [profileId],
-        (err, rows) => err ? res.status(500).json({ error: 'DB error' }) : res.json(rows)
-    );
-});
-app.post('/watchlist/remove', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    db.run(`DELETE FROM watchlist WHERE profile_id = ? AND id = ?`,
-        [profileId, req.body.id],
-        (err) => err ? res.status(500).json({ error: 'DB error' }) : res.json({ success: true })
-    );
-});
 
-app.post('/update-progress', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { showId, episodeNumber, currentTime, duration, showName, showThumbnail } = req.body;
 
-    db.serialize(() => {
-        db.run('INSERT OR IGNORE INTO shows_meta (id, name, thumbnail) VALUES (?, ?, ?)',
-            [showId, showName, deobfuscateUrl(showThumbnail)]);
 
-        db.run(`INSERT OR REPLACE INTO watched_episodes (profile_id, showId, episodeNumber, watchedAt, currentTime, duration) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
-            [profileId, showId, episodeNumber, currentTime, duration],
-            (err) => {
-                if (err) return res.status(500).json({ error: 'DB error on progress update' });
-                res.json({ success: true });
-            }
-        );
-    });
-});
 
-app.get('/episode-progress/:showId/:episodeNumber', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { showId, episodeNumber } = req.params;
 
-    db.get('SELECT currentTime, duration FROM watched_episodes WHERE profile_id = ? AND showId = ? AND episodeNumber = ?',
-        [profileId, showId, episodeNumber], (err, row) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json(row || { currentTime: 0, duration: 0 });
-    });
-});
 
-app.get('/watched-episodes/:showId', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    db.all(`SELECT episodeNumber FROM watched_episodes WHERE profile_id = ? AND showId = ?`,
-        [profileId, req.params.showId],
-        (err, rows) => err ? res.status(500).json({ error: 'DB error' }) : res.json(rows.map(r => r.episodeNumber))
-    );
-});
 
-app.get('/continue-watching', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const query = `
-        SELECT sm.id as showId, sm.name, sm.thumbnail, we.episodeNumber, we.currentTime, we.duration
-        FROM shows_meta sm
-        JOIN (
-           SELECT showId, episodeNumber, currentTime, duration, MAX(watchedAt) as watchedAt
-           FROM watched_episodes
-           WHERE profile_id = ?
-           GROUP BY showId
-        ) we ON sm.id = we.showId
-        ORDER BY we.watchedAt DESC
-        LIMIT 10;
-    `;
-    db.all(query, [profileId], async (err, rows) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        try {
-            const results = await Promise.all(rows.map(async (show) => {
-                const isComplete = show.duration > 0 && show.currentTime / show.duration >= 0.95;
-                if (!isComplete && show.currentTime > 0) {
-                    return {
-                        ...show,
-                        thumbnail: deobfuscateUrl(show.thumbnail),
-                        episodeToPlay: show.episodeNumber
-                    };
-                } else {
-                     const epResponse = await axios.get(apiEndpoint, {
-                        headers: { 'User-Agent': userAgent, 'Referer': referer },
-                        params: { query: `query($showId: String!) { show(_id: $showId) { availableEpisodesDetail } }`, variables: JSON.stringify({ showId: show.showId }) },
-                        timeout: 10000
-                    });
-                    const allEps = epResponse.data.data.show.availableEpisodesDetail.sub?.sort((a, b) => parseFloat(a) - parseFloat(b)) || [];
-                    const lastWatchedIndex = allEps.indexOf(show.episodeNumber);
 
-                    if (lastWatchedIndex > -1 && lastWatchedIndex < allEps.length) {
-                        return {
-                            ...show,
-                            thumbnail: deobfuscateUrl(show.thumbnail),
-                            episodeToPlay: allEps[lastWatchedIndex],
-                            currentTime: 0,
-                            duration: 0
-                        };
-                    }
-                    return null;
-                }
-            }));
-            res.json(results.filter(Boolean));
-        } catch (apiError) {
-            console.error("API Error in /continue-watching", apiError);
-            res.status(500).json({ error: 'API error while resolving next episodes' });
-        }
-    });
-});
+
 
 
 app.get('/skip-times/:showId/:episodeNumber', async (req, res) => {
@@ -884,63 +716,41 @@ app.get('/skip-times/:showId/:episodeNumber', async (req, res) => {
     }
 });
 
-app.post('/continue-watching/remove', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { showId } = req.body;
-    db.run(`DELETE FROM watched_episodes WHERE profile_id = ? AND showId = ?`,
-        [profileId, showId],
-        (err) => err ? res.status(500).json({ error: 'DB error' }) : res.json({ success: true })
-    );
+// API endpoint to get skip times for a Firebase user (no SQL settings; return generic)
+app.get('/api/users/me/skip-times/:show_id/:episode_id', async (req, res) => {
+    const { show_id, episode_id } = req.params;
+    const cacheKey = `skip-${show_id}-${episode_id}`;
+    const notFoundResponse = { found: false, results: [] };
+    
+    if (apiCache.has(cacheKey)) return res.json(apiCache.get(cacheKey));
+    try {
+        const malIdQuery = `query($showId: String!) { show(_id: $showId) { malId } }`;
+        const malIdResponse = await axios.get(apiEndpoint, {
+            headers: { 'User-Agent': userAgent, 'Referer': referer },
+            params: { query: malIdQuery, variables: JSON.stringify({ showId: show_id }) },
+            timeout: 10000
+        });
+        const malId = malIdResponse.data?.data?.show?.malId;
+        if (!malId) {
+            apiCache.set(cacheKey, notFoundResponse);
+            return res.json(notFoundResponse);
+        }
+        const response = await axios.get(`https://api.aniskip.com/v1/skip-times/${malId}/${episode_id}?types=op&types=ed`, {
+            headers: { 'User-Agent': userAgent },
+            timeout: 5000
+        });
+        apiCache.set(cacheKey, response.data);
+        return res.json(response.data);
+    } catch (error) {
+        apiCache.set(cacheKey, notFoundResponse);
+        return res.json(notFoundResponse);
+    }
 });
 
-app.get('/settings/:key', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    db.get('SELECT value FROM settings WHERE profile_id = ? AND key = ?', [profileId, req.params.key], (err, row) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json({ value: row ? row.value : null });
-    });
-});
-app.post('/settings', (req, res) => {
-    const profileId = req.headers['x-profile-id'];
-    if (!profileId) return res.status(400).json({ error: 'Profile ID is required' });
-    const { key, value } = req.body;
-    db.run('INSERT OR REPLACE INTO settings (profile_id, key, value) VALUES (?, ?, ?)', [profileId, key, value], (err) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json({ success: true });
-    });
-});
-app.get('/backup-db', (req, res) => {
-   res.download(dbPath, 'ani-web-backup.db', (err) => {
-      if (err) {
-         console.error("Error sending database file:", err);
-         res.status(500).send("Could not backup database.");
-      }
-   });
-});
-app.post('/restore-db', dbUpload.single('dbfile'), (req, res) => {
-   if (!req.file) {
-      return res.status(400).json({ error: 'No database file uploaded.' });
-   }
-   // Use local path for temporary database
-   const tempPath = path.join(__dirname, 'anime.db.temp');
-   db.close((err) => {
-      if (err) {
-         console.error('Failed to close database for restore:', err.message);
-         return res.status(500).json({ error: 'Failed to close current database.' });
-      }
-      fs.rename(tempPath, dbPath, (err) => {
-         if (err) {
-            console.error('Failed to replace database file:', err.message);
-            initializeDatabase();
-            return res.status(500).json({ error: 'Failed to replace database file.' });
-         }
-         initializeDatabase();
-         res.json({ success: true, message: 'Database restored successfully. The application will now refresh.' });
-      });
-   });
-});
+
+
+
+
 // API endpoint for direct video downloads
 app.get('/api/download-video', async (req, res) => {
     const { url, referer, filename } = req.query;

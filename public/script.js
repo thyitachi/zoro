@@ -2,11 +2,10 @@ let currentHlsInstance = null;
 let searchState = { page: 1, isLoading: false, hasMore: true };
 let seasonalState = { page: 1, isLoading: false, hasMore: true };
 let playerInactivityTimer = null;
-let profiles = [];
-let activeProfileId = null;
 let videoProgressUpdateTimer = null;
 let currentUser = null;
 let firebaseDb = null;
+let firebaseStorage = null;
 
 // Firebase configuration
 const firebaseConfig = { 
@@ -22,6 +21,10 @@ const firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 firebaseDb = firebase.database();
+firebaseStorage = firebase.storage();
+
+// Default profile picture URL
+const DEFAULT_PROFILE_PIC = '/profile_pics/default.png';
 
 // Firebase auth state observer
 firebase.auth().onAuthStateChanged((user) => {
@@ -30,50 +33,121 @@ firebase.auth().onAuthStateChanged((user) => {
     console.log('User is signed in:', user.uid);
     // Load user data from Firebase
     loadUserData();
+    // Update UI to show user is logged in
+    updateAuthUI(true);
+    // Refresh the continue watching section with Firebase data
+    fetchAndDisplayContinueWatching();
   } else {
     console.log('User is signed out');
+    // Update UI to show user is logged out
+    updateAuthUI(false);
+    // Refresh the continue watching section with local data
+    fetchAndDisplayContinueWatching();
   }
 });
 
 // Load user data from Firebase
 async function loadUserData() {
-  if (!currentUser) return;
-  
-  try {
-    const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
-    userRef.on('value', (snapshot) => {
-      const userData = snapshot.val() || {};
-      console.log('User data loaded:', userData);
+   console.log('loadUserData called with currentUser:', currentUser ? 'Yes' : 'No');
+   if (!currentUser) return;
+   
+   try {
+      const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
+      userRef.on('value', (snapshot) => {
+         const userData = snapshot.val() || {};
+         console.log('User data loaded:', userData);
+      
+      // Initialize user data if it doesn't exist
+      if (!userData.displayName || !userData.watchedEpisodes) {
+        initializeUserData();
+      }
+      
+      // Update profile display with user data
+      updateProfileDisplay(userData);
     });
   } catch (error) {
     console.error('Error loading user data:', error);
   }
 }
 
+// Initialize user data in Firebase
+async function initializeUserData() {
+   console.log('initializeUserData called with currentUser:', currentUser ? 'Yes' : 'No');
+   if (!currentUser) return;
+   
+   try {
+      const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
+      const userData = {
+         email: currentUser.email,
+         displayName: currentUser.displayName || currentUser.email.split('@')[0],
+         photoURL: currentUser.photoURL || DEFAULT_PROFILE_PIC,
+         createdAt: firebase.database.ServerValue.TIMESTAMP,
+         watchedEpisodes: {}
+      };
+      
+      await userRef.update(userData);
+      console.log('User data initialized');
+   } catch (error) {
+      console.error('Error initializing user data:', error);
+   }
+}
+
+// Update authentication UI based on user state
+function updateAuthUI(isLoggedIn) {
+   console.log('updateAuthUI called with:', isLoggedIn);
+   const loginBtnEl = document.getElementById('login-btn');
+   const userContainer = document.getElementById('user-container');
+   const userEmail = document.getElementById('user-email');
+   const profileArea = document.getElementById('profile-area');
+
+   if (isLoggedIn && currentUser) {
+     if (loginBtnEl) loginBtnEl.style.display = 'none';
+     if (userContainer) userContainer.style.display = 'flex';
+     if (userEmail) userEmail.textContent = currentUser.email || 'Logged in';
+     if (profileArea) profileArea.style.display = 'flex';
+   } else {
+     if (loginBtnEl) loginBtnEl.style.display = 'inline-block';
+     if (userContainer) userContainer.style.display = 'none';
+     if (profileArea) profileArea.style.display = 'none';
+   }
+}
+
 async function fetchWithProfile(url, options = {}) {
-   if (!activeProfileId) {
-      console.error("No active profile selected. Cannot make request.");
-      return Promise.reject(new Error("No active profile."));
-   }
+   console.log('fetchWithProfile called with:', url, 'currentUser:', currentUser ? 'Yes' : 'No');
    const newOptions = { ...options };
-   if (!newOptions.headers) {
-      newOptions.headers = {};
+   if (!newOptions.headers) newOptions.headers = {};
+   // Only pass Firebase user ID; no local profile fallback
+   if (currentUser) {
+      newOptions.headers['X-User-ID'] = currentUser.uid;
    }
-   newOptions.headers['X-Profile-ID'] = activeProfileId;
    if (newOptions.body && typeof newOptions.body === 'string' && !newOptions.headers['Content-Type']) {
       newOptions.headers['Content-Type'] = 'application/json';
    }
-   return fetch(url, newOptions);
+   try {
+      const response = await fetch(url, newOptions);
+      if (!response.ok) {
+         console.error(`API request failed: ${url} - Status: ${response.status} ${response.statusText}`);
+      }
+      return response;
+   } catch (error) {
+      console.error(`Network error when fetching ${url}:`, error);
+      throw new Error(`Network error: ${error.message}. Please check your connection and try again.`);
+   }
 }
 
 function navigateTo(hash) {
+   console.log('navigateTo called with:', hash);
+   console.log('Current location hash before change:', window.location.hash);
    window.location.hash = hash;
+   console.log('Location hash after change:', window.location.hash);
 }
 
 function router() {
    const hash = window.location.hash || '#home';
+   console.log('Router called with hash:', hash);
    const [pathPart, ...rest] = hash.substring(1).split('/');
    const [path, queryString] = pathPart.split('?');
+   console.log('Router parsed - path:', path, 'rest:', rest, 'queryString:', queryString);
    
    const data = { showId: rest[0], episodeToPlay: rest[1] };
    if (queryString) {
@@ -83,18 +157,40 @@ function router() {
    // Log navigation for debugging
    console.log(`Navigating to: ${path}, showId: ${data.showId}, episodeToPlay: ${data.episodeToPlay}`);
    
+   // DEBUG: Add specific logging for player route
+   if (path === 'player' && data.showId) {
+       console.log('=== PLAYER ROUTE DEBUG ===');
+       console.log('showId:', data.showId);
+       console.log('episodeToPlay:', data.episodeToPlay);
+       console.log('currentUser:', currentUser ? 'Yes' : 'No');
+       console.log('URL hash:', window.location.hash);
+       console.log('========================');
+   }
+   
    renderPageContent(path || 'home', data);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+   console.log('=== PAGE LOADED ===');
+   console.log('Initial hash:', window.location.hash);
+   console.log('currentUser:', currentUser ? 'Yes' : 'No');
+   console.log('==================');
+   
    setupThemeSelector();
    setupFirebaseAuth();
-   initProfileSystem();
    setupSearchFilters();
    setupHomePage();
    setupWatchlistPage();
    setupMobileMenu();
-   window.addEventListener('hashchange', router);
+   window.addEventListener('hashchange', (event) => {
+      console.log('=== HASHCHANGE EVENT ===');
+      console.log('Old URL:', event.oldURL);
+      console.log('New URL:', event.newURL);
+      console.log('Hash changed from:', event.oldURL.split('#')[1], 'to:', event.newURL.split('#')[1]);
+      console.log('========================');
+      router();
+   });
+   router();
 });
 
 function setupFirebaseAuth() {
@@ -105,7 +201,6 @@ function setupFirebaseAuth() {
    authContainer.innerHTML = `
       <div id="auth-status-container">
          <button id="login-btn" class="auth-btn">Login</button>
-         <button id="signup-btn" class="auth-btn">Sign Up</button>
          <div id="user-container" style="display: none;">
             <span id="user-email"></span>
             <button id="logout-btn" class="auth-btn">Logout</button>
@@ -115,75 +210,212 @@ function setupFirebaseAuth() {
          <div class="modal-content">
             <span class="close-modal">&times;</span>
             <h2 id="auth-modal-title">Login</h2>
-            <form id="auth-form">
-               <div class="form-group">
-                  <label for="email">Email</label>
-                  <input type="email" id="email" required>
-               </div>
-               <div class="form-group">
-                  <label for="password">Password</label>
-                  <input type="password" id="password" required>
-               </div>
-               <button type="submit" id="auth-submit-btn">Login</button>
-            </form>
+            <div id="google-auth-form" class="auth-form-container">
+               <p>Click the button below to sign in with your Google account.</p>
+               <button id="google-sign-in-btn" class="auth-provider-btn">
+                  <svg viewBox="0 0 24 24" width="18" height="18" style="margin-right: 8px;">
+                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                     <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  Sign in with Google
+               </button>
+            </div>
+            <div id="anonymous-auth-form" class="auth-form-container" style="display: none;">
+               <p>Continue as a guest user. Your watch history will be saved but only on this device.</p>
+               <button id="anonymous-sign-in-btn" class="auth-provider-btn">Continue as Guest</button>
+            </div>
+         </div>
+      </div>
+      
+      <!-- Profile Picture Modal -->
+      <div id="profile-pic-modal" class="modal" style="display: none;">
+         <div class="modal-content">
+            <span class="close-profile-modal">&times;</span>
+            <h2>Update Profile Picture</h2>
+            <div class="profile-picture-section">
+               <img id="profile-pic-preview" src="${DEFAULT_PROFILE_PIC}" alt="Profile Picture" loading="lazy">
+               <label for="profile-pic-upload" class="upload-btn">
+                  <svg fill="currentColor" viewBox="0 0 20 20"><path d="M13 10V3L4 14h7v7l9-11h-7z" clip-rule="evenodd" fill-rule="evenodd"></path></svg>
+                  Choose Picture
+               </label>
+               <input type="file" id="profile-pic-upload" accept="image/png, image/jpeg, image/gif" style="display:none;">
+            </div>
+            <div class="form-group">
+               <label for="display-name-input">Display Name</label>
+               <input type="text" id="display-name-input" class="settings-input">
+            </div>
+            <button id="save-profile-pic-btn" class="settings-save-btn">Save Changes</button>
          </div>
       </div>
    `;
    
    headerRight.insertBefore(authContainer, headerRight.firstChild);
    
-   // Update UI based on auth state
-   firebase.auth().onAuthStateChanged((user) => {
-      const loginBtn = document.getElementById('login-btn');
-      const signupBtn = document.getElementById('signup-btn');
-      const userContainer = document.getElementById('user-container');
-      const userEmail = document.getElementById('user-email');
-      
-      if (user) {
-         // User is signed in
-         if (loginBtn) loginBtn.style.display = 'none';
-         if (signupBtn) signupBtn.style.display = 'none';
-         if (userContainer) userContainer.style.display = 'flex';
-         if (userEmail) userEmail.textContent = user.email;
-      } else {
-         // User is signed out
-         if (loginBtn) loginBtn.style.display = 'inline-block';
-         if (signupBtn) signupBtn.style.display = 'inline-block';
-         if (userContainer) userContainer.style.display = 'none';
+   // Setup profile area
+   const profileArea = document.getElementById('profile-area');
+   if (profileArea) {
+      profileArea.innerHTML = `
+         <div id="profile-display" class="profile-display">
+            <img id="profile-avatar" src="${DEFAULT_PROFILE_PIC}" alt="Profile Avatar" class="profile-avatar" loading="lazy">
+            <div id="profile-dropdown" class="profile-dropdown" aria-hidden="true">
+               <div id="profile-dropdown-header">
+                  <img id="dropdown-avatar" src="${DEFAULT_PROFILE_PIC}" alt="Profile Avatar" class="profile-avatar" loading="lazy">
+                  <span id="dropdown-username"></span>
+               </div>
+               <div class="dropdown-item" id="edit-profile-btn">Edit Profile</div>
+               <div class="dropdown-item" id="logout-dropdown-btn">Logout</div>
+            </div>
+         </div>
+      `;
+   }
+   
+   // Setup Google and Guest authentication forms
+   const googleAuthForm = document.getElementById('google-auth-form');
+   const anonymousAuthForm = document.getElementById('anonymous-auth-form');
+   
+   // Setup event listeners for auth buttons
+   const loginBtn = document.getElementById('login-btn');
+   const logoutBtn = document.getElementById('logout-btn');
+   const logoutDropdownBtn = document.getElementById('logout-dropdown-btn');
+   const authModal = document.getElementById('auth-modal');
+   const closeModal = document.querySelector('.close-modal');
+   const authModalTitle = document.getElementById('auth-modal-title');
+   const googleSignInBtn = document.getElementById('google-sign-in-btn');
+   const anonymousSignInBtn = document.getElementById('anonymous-sign-in-btn');
+   const editProfileBtn = document.getElementById('edit-profile-btn');
+   const profilePicModal = document.getElementById('profile-pic-modal');
+   const closeProfileModal = document.querySelector('.close-profile-modal');
+   const profilePicUpload = document.getElementById('profile-pic-upload');
+   const profilePicPreview = document.getElementById('profile-pic-preview');
+   const displayNameInput = document.getElementById('display-name-input');
+   const saveProfilePicBtn = document.getElementById('save-profile-pic-btn');
+   const profileDisplay = document.getElementById('profile-display');
+   const profileDropdown = document.getElementById('profile-dropdown');
+   
+   // Open auth modal on Login button
+   if (loginBtn) {
+      loginBtn.addEventListener('click', () => {
+         if (authModalTitle) authModalTitle.textContent = 'Login';
+         if (googleAuthForm) googleAuthForm.style.display = 'block';
+         if (anonymousAuthForm) anonymousAuthForm.style.display = 'none';
+         if (authModal) authModal.style.display = 'block';
+      });
+   }
+   // Removed Sign Up logic per request (only Login is supported)
+   
+   // Profile dropdown toggle
+   if (profileDisplay) {
+      profileDisplay.addEventListener('click', (e) => {
+         e.stopPropagation();
+         profileDropdown.classList.toggle('active');
+      });
+   }
+   
+   document.addEventListener('click', () => {
+      if (profileDropdown) profileDropdown.classList.remove('active');
+   });
+   
+   if (profileDropdown) profileDropdown.addEventListener('click', e => e.stopPropagation());
+   
+   // Edit profile button
+   if (editProfileBtn) {
+      editProfileBtn.addEventListener('click', () => {
+         if (!currentUser) return;
+         
+         // Load current user data
+         const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
+         userRef.once('value', (snapshot) => {
+            const userData = snapshot.val() || {};
+            
+            // Set current values
+            displayNameInput.value = userData.displayName || '';
+            profilePicPreview.src = userData.photoURL || DEFAULT_PROFILE_PIC;
+            
+            // Show modal
+            profilePicModal.style.display = 'block';
+            profileDropdown.classList.remove('active');
+         });
+      });
+   }
+   
+   // Profile picture upload preview
+   if (profilePicUpload) {
+      profilePicUpload.addEventListener('change', () => {
+         if (profilePicUpload.files && profilePicUpload.files[0]) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+               profilePicPreview.src = e.target.result;
+            };
+            reader.readAsDataURL(profilePicUpload.files[0]);
+         }
+      });
+   }
+   
+   // Save profile picture and display name
+   if (saveProfilePicBtn) {
+      saveProfilePicBtn.addEventListener('click', async () => {
+         if (!currentUser) return;
+         
+         try {
+            // Update display name
+            const displayName = displayNameInput.value.trim();
+            if (displayName) {
+               await firebaseDb.ref(`users/${currentUser.uid}/displayName`).set(displayName);
+            }
+            
+            // Upload profile picture if selected
+            if (profilePicUpload.files && profilePicUpload.files[0]) {
+               const file = profilePicUpload.files[0];
+               const storageRef = firebaseStorage.ref();
+               const fileRef = storageRef.child(`profile_pics/${currentUser.uid}`);
+               
+               // Upload file
+               await fileRef.put(file);
+               
+               // Get download URL
+               const photoURL = await fileRef.getDownloadURL();
+               
+               // Update user profile
+               await firebaseDb.ref(`users/${currentUser.uid}/photoURL`).set(photoURL);
+            }
+            
+            // Close modal
+            profilePicModal.style.display = 'none';
+            alert('Profile updated successfully!');
+         } catch (error) {
+            console.error('Error updating profile:', error);
+            alert(`Error updating profile: ${error.message}`);
+         }
+      });
+   }
+   
+   // Close profile modal
+   if (closeProfileModal) {
+      closeProfileModal.addEventListener('click', () => {
+         profilePicModal.style.display = 'none';
+      });
+   }
+   
+   // Close profile modal when clicking outside
+   window.addEventListener('click', (event) => {
+      if (event.target === profilePicModal) {
+         profilePicModal.style.display = 'none';
       }
    });
    
-   // Setup event listeners
-   const loginBtn = document.getElementById('login-btn');
-   const signupBtn = document.getElementById('signup-btn');
-   const logoutBtn = document.getElementById('logout-btn');
-   const authModal = document.getElementById('auth-modal');
-   const closeModal = document.querySelector('.close-modal');
-   const authForm = document.getElementById('auth-form');
-   const authModalTitle = document.getElementById('auth-modal-title');
-   const authSubmitBtn = document.getElementById('auth-submit-btn');
    
-   let authMode = 'login';
-   
-   loginBtn.addEventListener('click', () => {
-      authMode = 'login';
-      authModalTitle.textContent = 'Login';
-      authSubmitBtn.textContent = 'Login';
-      authModal.style.display = 'block';
-   });
-   
-   signupBtn.addEventListener('click', () => {
-      authMode = 'signup';
-      authModalTitle.textContent = 'Sign Up';
-      authSubmitBtn.textContent = 'Sign Up';
-      authModal.style.display = 'block';
-   });
-   
-   logoutBtn.addEventListener('click', () => {
+   const handleLogout = () => {
       firebase.auth().signOut().catch(error => {
          console.error('Error signing out:', error);
       });
-   });
+   };
+   
+   logoutBtn.addEventListener('click', handleLogout);
+   if (logoutDropdownBtn) {
+      logoutDropdownBtn.addEventListener('click', handleLogout);
+   }
    
    closeModal.addEventListener('click', () => {
       authModal.style.display = 'none';
@@ -195,38 +427,31 @@ function setupFirebaseAuth() {
       }
    });
    
-   authForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      
-      if (authMode === 'login') {
-         firebase.auth().signInWithEmailAndPassword(email, password)
-            .then(() => {
-               authModal.style.display = 'none';
-               authForm.reset();
-            })
-            .catch(error => {
-               alert(`Login error: ${error.message}`);
-            });
-      } else {
-         firebase.auth().createUserWithEmailAndPassword(email, password)
-            .then(() => {
-               authModal.style.display = 'none';
-               authForm.reset();
-               // Initialize user data in Firebase
-               const user = firebase.auth().currentUser;
-               if (user) {
-                  firebaseDb.ref(`users/${user.uid}`).set({
-                     email: user.email,
-                     createdAt: firebase.database.ServerValue.TIMESTAMP,
-                     watchedEpisodes: {}
-                  });
-               }
-            })
-            .catch(error => {
-               alert(`Sign up error: ${error.message}`);
-            });
+   
+   // Google authentication (Login flow)
+   googleSignInBtn.addEventListener('click', async () => {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      try {
+         await firebase.auth().signInWithPopup(provider);
+         // Successful login (whether existing or new)
+         authModal.style.display = 'none';
+      } catch (error) {
+         // Surface friendly messages for common cases
+         if (error && error.code === 'auth/popup-closed-by-user') {
+            // user closed popup — ignore
+            return;
+         }
+         alert(`Google sign-in error: ${error.message}`);
+      }
+   });
+   
+   // Anonymous authentication
+   anonymousSignInBtn.addEventListener('click', async () => {
+      try {
+         await firebase.auth().signInAnonymously();
+         authModal.style.display = 'none';
+      } catch (error) {
+         alert(`Guest sign-in error: ${error.message}`);
       }
    });
 }
@@ -254,144 +479,38 @@ function setupMobileMenu() {
    }
 }
 
-async function initProfileSystem() {
-   try {
-      const response = await fetch('/api/profiles');
-      if (!response.ok) throw new Error('Could not load profiles.');
-      profiles = await response.json();
-      if (profiles.length > 0) {
-         const storedId = localStorage.getItem('activeProfileId');
-         const isValidId = profiles.some(p => p.id.toString() === storedId);
-         activeProfileId = isValidId ? storedId : profiles[0].id.toString();
-         localStorage.setItem('activeProfileId', activeProfileId);
-         
-         updateProfileDisplay();
-         setupProfileEventListeners();
-         document.getElementById('profile-area').style.display = 'flex';
-         router();
-      } else {
-         console.error("No profiles found on the server.");
-         alert("Error: No user profiles found. The application may not work correctly.");
-      }
-   } catch (error) {
-      console.error("Failed to initialize profile system:", error);
-      alert(`Critical Error: Could not load profile system. ${error.message}`);
-   }
-}
-
-function updateProfileDisplay() {
-    const activeProfile = profiles.find(p => p.id.toString() === activeProfileId);
-    if (!activeProfile) return;
+// Update profile display with user data from Firebase
+function updateProfileDisplay(userData) {
+    console.log('updateProfileDisplay called with userData:', userData);
+    if (!currentUser || !userData) return;
 
     const avatar = document.getElementById('profile-avatar');
     const dropdownAvatar = document.getElementById('dropdown-avatar');
     const dropdownUsername = document.getElementById('dropdown-username');
-    
-    const avatarUrl = activeProfile.picture_path ? `${activeProfile.picture_path}?t=${new Date().getTime()}` : '/profile_pics/default.png';
-    avatar.src = avatarUrl;
-    dropdownAvatar.src = avatarUrl;
-    dropdownUsername.textContent = activeProfile.name;
+    const headerUserEmail = document.getElementById('user-email');
 
-    const selectorContainer = document.getElementById('profile-selector-container');
-    selectorContainer.innerHTML = '';
-    profiles.forEach(profile => {
-        const item = document.createElement('div');
-        item.className = 'dropdown-item profile-switch-item';
-        if (profile.id.toString() === activeProfileId) {
-            item.classList.add('active');
-        }
-        item.dataset.id = profile.id;
-        item.innerHTML = `
-            <img src="${profile.picture_path || '/profile_pics/default.png'}" class="profile-avatar-small">
-            <span>${profile.name}</span>
-        `;
-        item.addEventListener('click', (e) => {
-            e.stopPropagation();
-            switchProfile(profile.id.toString());
-            document.getElementById('profile-dropdown').classList.remove('active');
-        });
-        selectorContainer.appendChild(item);
-    });
-}
+    if (avatar && userData.photoURL) avatar.src = userData.photoURL;
+    if (dropdownAvatar && userData.photoURL) dropdownAvatar.src = userData.photoURL;
 
+    // Helper to format email as: first 5 chars of local part + "..." + "@" + domain
+    const formatEmailForMobile = (email) => {
+        if (!email || typeof email !== 'string' || !email.includes('@')) return email || '';
+        const [local, domain] = email.split('@');
+        const prefix = local.slice(0, 5);
+        return `${prefix}...@${domain}`;
+    };
 
-function setupProfileEventListeners() {
-    const profileDisplay = document.getElementById('profile-display');
-    const profileDropdown = document.getElementById('profile-dropdown');
-    
-    if (profileDisplay) {
-        profileDisplay.addEventListener('click', (e) => {
-            e.stopPropagation();
-            profileDropdown.classList.toggle('active');
-        });
+    const displayNameOrEmail = userData.displayName || currentUser.email || '';
+
+    // Update dropdown username as before (full display name or email)
+    if (dropdownUsername) dropdownUsername.textContent = displayNameOrEmail;
+
+    // Update header user-email with truncated format on narrow screens
+    if (headerUserEmail) {
+        // If we have a display name, prefer showing it; otherwise, show formatted email
+        const baseText = userData.displayName ? userData.displayName : formatEmailForMobile(currentUser.email || '');
+        headerUserEmail.textContent = baseText;
     }
-
-    document.addEventListener('click', () => {
-        if(profileDropdown) profileDropdown.classList.remove('active');
-    });
-
-    if(profileDropdown) profileDropdown.addEventListener('click', e => e.stopPropagation());
-
-    const addProfileBtn = document.getElementById('add-profile-btn-dropdown');
-    if (addProfileBtn) addProfileBtn.addEventListener('click', createProfile);
-    
-    const settingsDeleteBtn = document.getElementById('delete-profile-btn-settings');
-    if (settingsDeleteBtn) settingsDeleteBtn.addEventListener('click', deleteProfile);
-}
-
-function switchProfile(newProfileId) {
-   activeProfileId = newProfileId;
-   localStorage.setItem('activeProfileId', newProfileId);
-   updateProfileDisplay();
-   
-   const hash = window.location.hash || '#home';
-   const [path] = hash.substring(1).split('/');
-   if (path === 'home' || path === '') {
-      document.getElementById('continue-watching').innerHTML = '';
-      document.getElementById('continue-watching').parentElement.style.display = 'none';
-      router();
-   } else {
-      window.location.reload();
-   }
-}
-
-async function createProfile() {
-   const name = prompt("Enter new profile name:");
-   if (name && name.trim()) {
-      try {
-         const response = await fetch('/api/profiles', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name.trim() })
-         });
-         if (!response.ok) throw new Error((await response.json()).error || 'Failed to create profile.');
-         const newProfile = await response.json();
-         await initProfileSystem();
-         switchProfile(newProfile.id.toString());
-      } catch (error) {
-         alert(`Error: ${error.message}`);
-      }
-   }
-}
-
-async function deleteProfile() {
-   if (profiles.length <= 1) {
-      alert("Cannot delete the last profile.");
-      return;
-   }
-   const currentProfile = profiles.find(p => p.id.toString() === activeProfileId);
-   if (!currentProfile) return;
-   if (confirm(`Are you sure you want to delete the profile "${currentProfile.name}"? All its data will be permanently deleted.`)) {
-      try {
-         const response = await fetch(`/api/profiles/${activeProfileId}`, { method: 'DELETE' });
-         if (!response.ok) throw new Error((await response.json()).error || 'Failed to delete profile.');
-         localStorage.removeItem('activeProfileId');
-         await initProfileSystem();
-         navigateTo('#home');
-      } catch (error) {
-         alert(`Error: ${error.message}`);
-      }
-   }
 }
 
 function stopVideoPlayback() {
@@ -446,6 +565,7 @@ function renderPageContent(page, data = {}) {
           }
          document.getElementById('searchInput').focus();
       } else if (page === 'player' && data.showId) {
+         console.log('renderPageContent calling fetchEpisodes with:', data.showId, data.episodeToPlay);
          fetchEpisodes(data.showId, data.episodeToPlay);
       } else if (page === 'settings') {
           renderSettingsPage();
@@ -476,19 +596,10 @@ function setupHomePage() {
 }
 function setupWatchlistPage() {
    const importBtn = document.getElementById('importMalBtn');
-   const restoreDbBtn = document.getElementById('restoreDbBtn');
    const sortSelect = document.getElementById('watchlist-sort');
    const filterButtons = document.querySelectorAll('.status-filter-btn');
-
-   if (importBtn) {
-      importBtn.addEventListener('click', handleMalImport);
-   }
-   if (restoreDbBtn) {
-      restoreDbBtn.addEventListener('click', handleDbRestore);
-   }
-   if (sortSelect) {
-      sortSelect.addEventListener('change', fetchAndDisplayWatchlist);
-   }
+   if (importBtn) importBtn.addEventListener('click', handleMalImport);
+   if (sortSelect) sortSelect.addEventListener('change', fetchAndDisplayWatchlist);
    filterButtons.forEach(button => {
        button.addEventListener('click', () => {
            filterButtons.forEach(btn => btn.classList.remove('active'));
@@ -531,37 +642,6 @@ async function handleMalImport() {
       statusDiv.textContent = 'Error reading file.';
    };
    reader.readAsText(file);
-}
-async function handleDbRestore() {
-   const fileInput = document.getElementById('restoreFile');
-   const statusDiv = document.getElementById('restoreStatus');
-   if (!fileInput.files.length) {
-      statusDiv.textContent = 'Please select a database file to restore.';
-      return;
-   }
-   const file = fileInput.files[0];
-   if (!file.name.endsWith('.db')) {
-      statusDiv.textContent = 'Invalid file type. Please select a .db file.';
-      return;
-   }
-   const formData = new FormData();
-   formData.append('dbfile', file);
-   statusDiv.textContent = 'Restoring... This may take a moment.';
-   try {
-      const response = await fetch('/restore-db', {
-         method: 'POST',
-         body: formData,
-      });
-      const result = await response.json();
-      if (!response.ok) {
-         throw new Error(result.error || 'Failed to restore database.');
-      }
-      statusDiv.textContent = result.message;
-      alert('Database restored successfully! The page will now reload.');
-      setTimeout(() => window.location.reload(), 1000);
-   } catch (error) {
-      statusDiv.textContent = `Error: ${error.message}`;
-   }
 }
 async function loadHomePage() {
    setupScheduleSelector();
@@ -675,6 +755,7 @@ async function fetchAndDisplayTopPopular(timeframe = 'all') {
 }
 
 async function fetchAndDisplaySeasonal() {
+   console.log('fetchAndDisplaySeasonal called');
    if (seasonalState.isLoading || !seasonalState.hasMore) return;
    seasonalState.isLoading = true;
    const container = document.getElementById('seasonal-anime');
@@ -708,24 +789,70 @@ async function fetchAndDisplaySeasonal() {
 }
 
 async function fetchAndDisplayContinueWatching() {
+   console.log('fetchAndDisplayContinueWatching called');
    try {
-      const response = await fetchWithProfile('/continue-watching');
-      if (!response.ok) throw new Error('Network response was not ok');
-      const shows = await response.json();
       const container = document.getElementById('continue-watching');
-      if (shows && shows.length > 0) {
-         container.parentElement.style.display = 'block';
-         displayGrid('continue-watching', shows, (e, show) => {
-             if (e.target.classList.contains('remove-from-cw-btn')) return;
-             navigateTo(`#player/${show.showId}/${show.episodeToPlay}`);
+      const section = container ? container.parentElement : null;
+      // Only show continue watching section for logged-in users
+      if (!currentUser) {
+         if (section) section.style.display = 'none';
+         return;
+      }
+      // Read hidden map to soft-hide items
+      const [watchedSnap, hiddenSnap] = await Promise.all([
+         firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes`).once('value'),
+         firebaseDb.ref(`users/${currentUser.uid}/continueWatchingHidden`).once('value')
+      ]);
+      const watchedByShow = watchedSnap.val() || {};
+      const hiddenMap = hiddenSnap.val() || {};
+      const items = [];
+      for (const [showId, episodes] of Object.entries(watchedByShow)) {
+         if (hiddenMap[showId]) continue; // skip hidden shows
+         if (!episodes || typeof episodes !== 'object') continue;
+         // find most recent episode by timestamp
+         let lastEp = null;
+         let lastTs = 0;
+         for (const [epNum, epData] of Object.entries(episodes)) {
+            const ts = typeof epData?.timestamp === 'number' ? epData.timestamp : 0;
+            if (ts >= lastTs) {
+               lastTs = ts;
+               lastEp = epNum;
+            }
+         }
+         if (!lastEp) continue;
+         try {
+            const metaRes = await fetch(`/show-meta/${encodeURIComponent(showId)}`);
+            if (!metaRes.ok) continue;
+            const meta = await metaRes.json();
+            items.push({
+               show_id: showId,
+               showId,
+               name: meta.name,
+               thumbnail: meta.thumbnail,
+               episode_id: lastEp,
+               episodeToPlay: lastEp,
+               timestamp: lastTs
+            });
+         } catch (_) {
+            // ignore meta errors for a single item
+         }
+      }
+      items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      if (items.length > 0) {
+         if (section) section.style.display = 'block';
+         displayGrid('continue-watching', items, (e, show) => {
+            if (e.target.classList.contains('remove-from-cw-btn')) return;
+            const showId = show.show_id || show.showId;
+            const episodeToPlay = show.episode_id || show.episodeToPlay;
+            navigateTo(`#player/${showId}/${episodeToPlay}`);
          });
       } else {
-         if (container) container.parentElement.style.display = 'none';
+         if (section) section.style.display = 'none';
       }
    } catch (error) {
-      console.error('Error fetching continue watching:', error);
+      console.error('Error building continue watching from Firebase:', error);
       const container = document.getElementById('continue-watching');
-      if (container) container.parentElement.style.display = 'none';
+      if (container && container.parentElement) container.parentElement.style.display = 'none';
    }
 }
 
@@ -753,15 +880,26 @@ function displayGrid(containerId, items, onClick, titleFn = item => item.name, a
 
         if (containerId === 'continue-watching') {
             overlayContent = `<button class="remove-from-cw-btn" title="Remove from Continue Watching">×</button>`;
-            const isResuming = item.currentTime > 0 && item.duration > 0;
-            const progressPercent = isResuming ? (item.currentTime / item.duration) * 100 : 0;
+            
+            // Handle different property names between Firebase and local API
+            const currentTime = item.currentTime || 0;
+            const duration = item.duration || 0;
+            const progress = item.progress || 0;
+            const episodeToPlay = item.episodeToPlay || item.episode_id;
+            
+            // Determine if we're resuming based on either currentTime/duration or progress
+            const isResuming = (currentTime > 0 && duration > 0) || (progress > 0);
+            // Calculate progress percentage based on available data
+            const progressPercent = isResuming ? 
+                (currentTime > 0 && duration > 0) ? (currentTime / duration) * 100 : progress * 100 
+                : 0;
 
-            infoOverlay = `<div class="card-info-overlay"><span class="card-ep-count">EP ${item.episodeToPlay}</span></div>`;
+            infoOverlay = `<div class="card-info-overlay"><span class="card-ep-count">EP ${episodeToPlay}</span></div>`;
             if(isResuming) {
                 progressOverlay = `
                     <div class="card-progress-overlay">
                         <div class="card-progress-bar" style="width: ${progressPercent}%"></div>
-                        <span class="card-progress-time">${formatTime(item.currentTime)} / ${formatTime(item.duration)}</span>
+                        <span class="card-progress-time">${formatTime(currentTime)} / ${formatTime(duration)}</span>
                     </div>
                 `;
             }
@@ -795,23 +933,25 @@ function displayGrid(containerId, items, onClick, titleFn = item => item.name, a
       
         if (containerId === 'continue-watching') {
             const removeBtn = div.querySelector('.remove-from-cw-btn');
-            removeBtn.addEventListener('click', async () => {
+            removeBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
                 try {
-                    const response = await fetchWithProfile('/continue-watching/remove', {
-                        method: 'POST',
-                        body: JSON.stringify({ showId: item.showId })
-                    });
-                    if (response.ok) {
-                        div.remove();
-                        if (container.children.length === 0) {
-                            container.parentElement.style.display = 'none';
-                        }
-                    } else {
-                        alert('Failed to remove from continue watching.');
+                    if (!currentUser) {
+                        alert('Please log in to modify Continue Watching.');
+                        return;
+                    }
+                    // Soft-hide this show from Continue Watching without deleting history:
+                    // Set a "hidden" flag under users/{uid}/continueWatchingHidden/{showId} = true
+                    const showId = item.show_id || item.showId;
+                    await firebaseDb.ref(`users/${currentUser.uid}/continueWatchingHidden/${showId}`).set(true);
+                    // Remove card from UI
+                    div.remove();
+                    if (container.children.length === 0 && container.parentElement) {
+                        container.parentElement.style.display = 'none';
                     }
                 } catch (error) {
-                    console.error('Error removing from continue watching:', error);
-                    alert('An error occurred.');
+                    console.error('Error hiding from continue watching (Firebase):', error);
+                    alert('Failed to remove from Continue Watching.');
                 }
             });
         }
@@ -820,65 +960,52 @@ function displayGrid(containerId, items, onClick, titleFn = item => item.name, a
 }
 
 async function fetchAndDisplayWatchlist() {
+   console.log('fetchAndDisplayWatchlist called');
    try {
+      const container = document.getElementById('watchlist');
+      container.innerHTML = '';
+      if (!currentUser) {
+         container.innerHTML = '<p>Please log in to view your watchlist.</p>';
+         return;
+      }
       const sortSelect = document.getElementById('watchlist-sort');
       const activeFilterBtn = document.querySelector('.status-filter-btn.active');
       const sortBy = sortSelect ? sortSelect.value : 'last_added';
       const filterBy = activeFilterBtn ? activeFilterBtn.dataset.status : 'All';
 
-      const response = await fetchWithProfile(`/watchlist?sort=${sortBy}`);
+      const response = await fetchWithProfile(`/api/users/me/watchlist?sort=${sortBy}`);
       if (!response.ok) throw new Error('Network response was not ok.');
       let shows = await response.json();
-      const container = document.getElementById('watchlist');
-      container.innerHTML = '';
 
       if (filterBy !== 'All') {
-          shows = shows.filter(show => show.status === filterBy);
+         shows = shows.filter(show => show.status === filterBy || !show.status);
       }
 
       if (shows.length === 0) {
          container.innerHTML = `<p>${filterBy === 'All' ? 'Your watchlist is empty.' : `No items with status "${filterBy}".`}</p>`;
          return;
       }
+
       shows.forEach(show => {
          const item = document.createElement('div');
          item.className = 'grid-item watchlist-item';
-         
-         const clickHandler = (e) => {
-             if (e.target.closest('.watchlist-controls')) return;
-             navigateTo(`#player/${show.id}`);
-         };
-
-         item.addEventListener('click', clickHandler);
+         const showId = show.show_id || show.id;
+         item.addEventListener('click', (e) => {
+            if (e.target.closest('.watchlist-controls')) return;
+            navigateTo(`#player/${showId}`);
+         });
          item.innerHTML = `
             <div class="img-container">
                 <img src="${fixThumbnailUrl(show.thumbnail)}" alt="${show.name}" loading="lazy" onload="this.classList.add('loaded')" onerror="this.src='/placeholder.png'; this.className='image-fallback loaded';">
             </div>
             <p>${show.name}</p>
             <div class="watchlist-controls">
-               <select class="status-select" data-id="${show.id}">
-                  <option value="Watching" ${show.status === 'Watching' ? 'selected' : ''}>Watching</option>
-                  <option value="Completed" ${show.status === 'Completed' ? 'selected' : ''}>Completed</option>
-                  <option value="On-Hold" ${show.status === 'On-Hold' ? 'selected' : ''}>On-Hold</option>
-                  <option value="Dropped" ${show.status === 'Dropped' ? 'selected' : ''}>Dropped</option>
-                  <option value="Planned" ${show.status === 'Planned' ? 'selected' : ''}>Planned</option>
-               </select>
-               <button class="remove-button" data-id="${show.id}">Remove</button>
+               <button class="remove-button" data-id="${showId}">Remove</button>
             </div>
          `;
-         item.querySelector('.status-select').addEventListener('change', async (e) => {
-            await fetchWithProfile('/watchlist/status', {
-               method: 'POST',
-               body: JSON.stringify({ id: show.id, status: e.target.value })
-            });
-            fetchAndDisplayWatchlist();
-         });
          item.querySelector('.remove-button').addEventListener('click', async () => {
-            await fetchWithProfile('/watchlist/remove', {
-               method: 'POST',
-               body: JSON.stringify({ id: show.id })
-            });
-            item.remove();
+            const resp = await fetchWithProfile(`/api/users/me/watchlist/${showId}`, { method: 'DELETE' });
+            if (resp.ok) item.remove();
          });
          container.appendChild(item);
       });
@@ -983,90 +1110,126 @@ async function performSearch(isNewSearch) {
 async function fetchEpisodes(showId, episodeToPlay = null, mode = 'sub') {
    const page = document.getElementById('player-page');
    page.innerHTML = '<div class="loading"></div>';
+   
+   // DEBUG: Log initial state
+   console.log('=== fetchEpisodes called ===');
+   console.log('showId:', showId);
+   console.log('episodeToPlay:', episodeToPlay);
+   console.log('mode:', mode);
+   console.log('currentUser:', currentUser ? 'Yes' : 'No');
+   console.log('window.location.hash:', window.location.hash);
+   
    try {
       const showMetaResponse = await fetch(`/show-meta/${showId}`);
       if (!showMetaResponse.ok) throw new Error(`Failed to fetch show metadata: ${showMetaResponse.statusText}`);
       const showMeta = await showMetaResponse.json();
 
-      // Get episodes from API
       const episodesResponse = await fetch(`/episodes?showId=${encodeURIComponent(showId)}&mode=${mode}`);
       if (!episodesResponse.ok) throw new Error(`Failed to fetch episodes list: ${episodesResponse.statusText}`);
       const { episodes, description } = await episodesResponse.json();
       const sortedEpisodes = episodes.sort((a, b) => parseFloat(a) - parseFloat(b));
-      
-      // Get watched episodes - either from Firebase (if logged in) or from local API
+
+      // Watched/last episode only for logged-in users via Firebase
       let watchedEpisodes = [];
-      let lastWatchedTimestamp = 0;
       let lastWatchedEp = null;
-      
+
+      // Fetch Firebase data first and wait for it to complete
       if (currentUser) {
-         // Get watched episodes from Firebase
          try {
+            console.log('Fetching watched episodes from Firebase...');
             const watchedSnapshot = await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes/${showId}`).once('value');
             const watchedData = watchedSnapshot.val() || {};
-            
-            // Extract episode numbers and find the most recently watched
             watchedEpisodes = Object.keys(watchedData);
-            
-            // Find the most recently watched episode based on timestamp
+            let lastTs = 0;
             Object.entries(watchedData).forEach(([epNum, epData]) => {
-               if (epData.timestamp && epData.timestamp > lastWatchedTimestamp) {
-                  lastWatchedTimestamp = epData.timestamp;
+               if (epData.timestamp && epData.timestamp > lastTs) {
+                  lastTs = epData.timestamp;
                   lastWatchedEp = epNum;
                }
             });
-            
-            console.log('Firebase watched episodes:', watchedEpisodes);
-            console.log('Last watched episode from Firebase:', lastWatchedEp);
+            console.log('Firebase watched data:', watchedData);
+            console.log('watchedEpisodes array:', watchedEpisodes);
+            console.log('lastWatchedEp:', lastWatchedEp);
          } catch (err) {
             console.error('Error fetching watched episodes from Firebase:', err);
          }
       } else {
-         // Fallback to local API if not logged in
-         try {
-            const watchedResponse = await fetchWithProfile(`/watched-episodes/${showId}`);
-            if (watchedResponse.ok) {
-               watchedEpisodes = await watchedResponse.json();
-               
-               // For local API, we assume the highest episode number is the last watched
-               if (watchedEpisodes.length > 0) {
-                  const numericWatchedEpisodes = watchedEpisodes.map(ep => parseFloat(ep));
-                  lastWatchedEp = Math.max(...numericWatchedEpisodes).toString();
-               }
-            }
-         } catch (err) {
-            console.error('Error fetching watched episodes from local API:', err);
+         console.log('No user logged in, skipping Firebase watch history fetch');
+      }
+      
+      // DEBUG: Log episode determination logic
+      console.log('Episode determination:');
+      console.log('episodeToPlay parameter:', episodeToPlay);
+      console.log('lastWatchedEp from Firebase:', lastWatchedEp);
+      console.log('sortedEpisodes[0]:', sortedEpisodes[0]);
+      
+      // Determine final episode to play
+      let finalEpisodeToPlay = episodeToPlay || lastWatchedEp || sortedEpisodes[0];
+      console.log('finalEpisodeToPlay:', finalEpisodeToPlay);
+      
+      // Persist intended episode in the URL so refresh keeps current selection stable
+      if (lastWatchedEp && !episodeToPlay) {
+         const currentHash = window.location.hash || '';
+         console.log('Checking URL persistence - currentHash:', currentHash);
+         // If there is no trailing /<ep> in the hash, add it (keeps existing params)
+         if (!/\/\d+($|\/|\?)/.test(currentHash)) {
+            console.log('Adding last watched episode to URL:', lastWatchedEp);
+            navigateTo(`#player/${showId}/${lastWatchedEp}`);
+         } else {
+            console.log('Episode already in URL, not modifying');
          }
       }
       
-      // Get watchlist status
-      const watchlistResponse = await fetchWithProfile(`/watchlist/check/${showId}`);
+      // Watchlist status only for logged-in users
       let inWatchlist = false;
-      if (watchlistResponse.ok) {
-         const watchlistData = await watchlistResponse.json();
-         inWatchlist = watchlistData.inWatchlist;
+
+      // Determine episode to play
+      let epToPlay = episodeToPlay || lastWatchedEp || sortedEpisodes[0];
+      epToPlay = String(epToPlay);
+
+      // Ensure watched markers include the episode being played if it's already recorded in Firebase
+      if (currentUser && lastWatchedEp && !watchedEpisodes.includes(lastWatchedEp)) {
+         watchedEpisodes.push(lastWatchedEp);
       }
-      
-      // Determine which episode to play:
-      // 1. If a specific episode is requested, play that
-      // 2. If user has watched episodes, play the last watched episode
-      // 3. Otherwise, play the first episode
-      let epToPlay;
-      if (episodeToPlay) {
-         epToPlay = episodeToPlay;
-      } else if (lastWatchedEp) {
-         epToPlay = lastWatchedEp;
-      } else {
-         epToPlay = sortedEpisodes[0];
-      }
-      
-      // Log the episode selection logic for debugging
-      console.log(`Episode selection: requested=${episodeToPlay}, lastWatched=${lastWatchedEp}, selected=${epToPlay}`);
-      
-      // Pass the episode to play to displayEpisodes so it can mark it as active
+
+      // Display episodes with watched data from Firebase
       displayEpisodes(sortedEpisodes, showId, showMeta, mode, watchedEpisodes, description, inWatchlist, epToPlay);
-      
+
+      // Apply watched markers immediately after displayEpisodes to ensure they persist on refresh
+      console.log('Applying watched markers immediately after displayEpisodes...');
+      if (currentUser) {
+         try {
+            const watchedSnapshot = await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes/${showId}`).once('value');
+            const watchedData = watchedSnapshot.val() || {};
+            const watchedSet = new Set(Object.keys(watchedData).map(String));
+            console.log('Applying watched markers from Firebase:', watchedSet);
+            
+            // Use requestAnimationFrame to ensure DOM is fully rendered
+            requestAnimationFrame(() => {
+               document.querySelectorAll('#episode-grid-player .result-item').forEach(el => {
+                  const ep = el.dataset.episode;
+                  if (!ep) return;
+                  if (ep === epToPlay) {
+                     // keep current playing as active (purple), not green
+                     console.log(`Keeping active episode ${ep} as active (not watched)`);
+                     el.classList.remove('watched');
+                  } else if (watchedSet.has(ep)) {
+                     console.log(`Adding watched class to episode ${ep}`);
+                     el.classList.add('watched');
+                  } else {
+                     console.log(`Removing watched class from episode ${ep}`);
+                     el.classList.remove('watched');
+                  }
+               });
+            });
+         } catch (e) {
+            console.warn('Could not apply watched markers:', e);
+         }
+      }
+
       if (epToPlay) {
+         // Start player after markers are set to avoid resetting classes on refresh
+         console.log('Starting video player for episode:', epToPlay);
          fetchVideoLinks(showId, epToPlay, showMeta, mode);
       }
    } catch (error) {
@@ -1104,6 +1267,13 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
 
    // Log the current episode for debugging
    console.log(`displayEpisodes called with currentEpisode: ${currentEpisode}`);
+   console.log('displayEpisodes parameters:');
+   console.log('- episodes count:', episodes.length);
+   console.log('- showId:', showId);
+   console.log('- mode:', mode);
+   console.log('- watchedEpisodes count:', watchedEpisodes.length);
+   console.log('- inWatchlist:', inWatchlist);
+   console.log('- currentEpisode:', currentEpisode);
 
    page.innerHTML = `
       <div class="player-page-content">
@@ -1128,9 +1298,19 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
          <div id="player-section-container"></div>
          ${jumpControls}
          <div id="episode-grid-player" class="episode-grid">
-            ${episodes.map(ep => `
-               <div class="result-item ${watchedEpisodes.includes(ep.toString()) ? 'watched' : ''} ${currentEpisode === ep.toString() ? 'active' : ''}" data-episode="${ep}">Episode ${ep}</div>
-            `).join('') || `<p class="error">No ${mode.toUpperCase()} episodes found</p>`}
+            ${episodes.map(ep => {
+               // Determine classes for this episode
+               let classes = ['result-item'];
+               // If it's the current episode, add active class
+               if (currentEpisode === ep.toString()) {
+                  classes.push('active');
+               }
+               // Otherwise, if it's in watched episodes, add watched class
+               else if (watchedEpisodes.includes(ep.toString())) {
+                  classes.push('watched');
+               }
+               return `<div class="${classes.join(' ')}" data-episode="${ep}">Episode ${ep}</div>`;
+            }).join('') || `<p class="error">No ${mode.toUpperCase()} episodes found</p>`}
          </div>
       </div>
    `;
@@ -1172,6 +1352,8 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
             ep.classList.remove('active');
          });
          item.classList.add('active');
+         // Remove watched class if it's the active episode to ensure proper styling
+         item.classList.remove('watched');
          
          navigateTo(`#player/${showId}/${episodeNumber}`);
       });
@@ -1209,12 +1391,18 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
    
    const watchlistBtn = document.getElementById('watchlistToggleBtn');
    watchlistBtn.addEventListener('click', async () => {
+      if (!currentUser) {
+         alert('Please log in to manage your watchlist.');
+         return;
+      }
       const isInList = watchlistBtn.classList.contains('in-list');
-      const endpoint = isInList ? '/watchlist/remove' : '/watchlist/add';
-      const body = { id: showId, name: showMeta.name, thumbnail: showMeta.thumbnail };
+      const endpoint = isInList ? '/api/users/me/watchlist/' + showId : '/api/users/me/watchlist';
+      const method = isInList ? 'DELETE' : 'POST';
+      const body = isInList ? null : { show_id: showId, name: showMeta.name, thumbnail: showMeta.thumbnail };
       const response = await fetchWithProfile(endpoint, {
-         method: 'POST',
-         body: JSON.stringify(body)
+         method,
+         headers: { 'Content-Type': 'application/json' },
+         body: body ? JSON.stringify(body) : undefined
       });
       if (response.ok) {
          watchlistBtn.classList.toggle('in-list');
@@ -1224,6 +1412,7 @@ function displayEpisodes(episodes, showId, showMeta, mode, watchedEpisodes, desc
 }
 
 async function fetchVideoLinks(showId, episodeNumber, showMeta, mode = 'sub') {
+   console.log('fetchVideoLinks called with:', showId, episodeNumber, mode);
    const playerPageContent = document.querySelector('.player-page-content');
    if (!playerPageContent) return;
    const oldPlayer = document.getElementById('player-section-container');
@@ -1233,49 +1422,121 @@ async function fetchVideoLinks(showId, episodeNumber, showMeta, mode = 'sub') {
    playerContainer.innerHTML = '<div class="loading"></div>';
    playerPageContent.insertBefore(playerContainer, document.querySelector('.ep-jump-controls, #episode-grid-player'));
    
-   // Update the active class for the currently playing episode
+   // Update the active class for the currently playing episode without wiping watched markers elsewhere
    document.querySelectorAll('#episode-grid-player .result-item').forEach(item => {
-      item.classList.remove('active');
-      if (item.dataset.episode === episodeNumber) {
-         item.classList.add('active');
+      const isActive = item.dataset.episode === String(episodeNumber);
+      item.classList.toggle('active', isActive);
+      if (isActive) {
+         item.classList.remove('watched');
       }
    });
    
    try {
       // Mark episode as watched in Firebase if user is logged in
       if (currentUser) {
-         const timestamp = firebase.database.ServerValue.TIMESTAMP;
-         await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes/${showId}/${episodeNumber}`).set({
-            timestamp: timestamp,
-            showName: showMeta.name
-         });
-         
-         // Update the watched class for this episode
-         const episodeItem = document.querySelector(`#episode-grid-player .result-item[data-episode="${episodeNumber}"]`);
-         if (episodeItem && !episodeItem.classList.contains('watched')) {
-            episodeItem.classList.add('watched');
+         try {
+            const timestamp = firebase.database.ServerValue.TIMESTAMP;
+            await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes/${showId}/${episodeNumber}`).set({
+               timestamp: timestamp,
+               showName: showMeta.name
+            });
+            // Unhide in Continue Watching if it was previously hidden so new shows appear again
+            firebaseDb.ref(`users/${currentUser.uid}/continueWatchingHidden/${showId}`).remove().catch(()=>{});
+            
+            // Fire-and-forget API update (non-blocking)
+            fetchWithProfile('/api/users/me/watched-episodes', {
+               method: 'POST',
+               headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify({
+                  show_id: showId,
+                  episode_id: episodeNumber,
+                  progress: 0,
+                  show_name: showMeta.name,
+                  show_thumbnail: showMeta.thumbnail
+               })
+            }).catch(apiError => console.error('Error updating watched episode in database:', apiError));
+            
+            // Don't add the watched class to the active episode
+            // This ensures the active episode stays purple instead of green
+            // The watched status is still recorded in Firebase
+         } catch (firebaseError) {
+            console.error('Error updating Firebase watched status:', firebaseError);
+            // Continue with video loading even if Firebase update fails
          }
       }
       
-      const [sourcesResponse, settingsResponse, progressResponse] = await Promise.all([
-         fetch(`/video?showId=${encodeURIComponent(showId)}&episodeNumber=${encodeURIComponent(episodeNumber)}&mode=${mode}`),
-         fetchWithProfile(`/settings/preferredSource`),
-         fetchWithProfile(`/episode-progress/${showId}/${episodeNumber}`)
-      ]);
-      if (!sourcesResponse.ok) throw new Error('Failed to fetch video sources');
-      if (!settingsResponse.ok) throw new Error('Failed to fetch user settings');
-      if (!progressResponse.ok) throw new Error('Failed to fetch episode progress');
-
-      const sources = await sourcesResponse.json();
-      const { value: preferredSource } = await settingsResponse.json();
-      const progress = await progressResponse.json();
+      // Fetch video sources with better error handling
+      let sources, preferredSource, progress;
+      
+      try {
+         console.log(`Fetching video sources for ${showId} episode ${episodeNumber} mode ${mode}`);
+         const sourcesResponse = await fetch(`/video?showId=${encodeURIComponent(showId)}&episodeNumber=${encodeURIComponent(episodeNumber)}&mode=${mode}`);
+         
+         // Check for HTTP errors
+         if (!sourcesResponse.ok) {
+            const errorText = await sourcesResponse.text();
+            console.error(`Server error: ${sourcesResponse.status} ${sourcesResponse.statusText}`, errorText);
+            throw new Error(`Failed to fetch video sources: ${sourcesResponse.status} ${sourcesResponse.statusText}`);
+         }
+         
+         // Parse response
+         try {
+            sources = await sourcesResponse.json();
+         } catch (jsonError) {
+            console.error('Failed to parse server response:', jsonError);
+            throw new Error('Invalid response from server');
+         }
+         
+         // Validate sources
+         if (!sources) {
+            throw new Error('No video sources returned from server');
+         }
+         
+         if (Array.isArray(sources) && sources.length === 0) {
+            throw new Error('No video sources available for this episode');
+         }
+         
+         if (Array.isArray(sources) && sources.some(s => s.error)) {
+            const errorSource = sources.find(s => s.error);
+            throw new Error(`Source error: ${errorSource.error}`);
+         }
+         
+         console.log(`Successfully loaded ${Array.isArray(sources) ? sources.length : 1} video sources`);
+      } catch (sourceError) {
+         console.error('Error fetching video sources:', sourceError);
+         playerContainer.innerHTML = `<p class="error">Could not load video sources: ${sourceError.message || 'Unknown error'}. Please try again later or try a different episode.</p>`;
+         return;
+      }
+      
+      // Fetch user settings and progress (non-critical)
+      try {
+         const [settingsResponse, progressResponse] = await Promise.all([
+            fetchWithProfile(`/settings/preferredSource`),
+            fetchWithProfile(`/episode-progress/${showId}/${episodeNumber}`)
+         ]);
+         
+         if (settingsResponse.ok) {
+            const settingsData = await settingsResponse.json();
+            preferredSource = settingsData.value;
+         }
+         
+         if (progressResponse.ok) {
+            progress = await progressResponse.json();
+         }
+      } catch (settingsError) {
+         console.error('Error fetching settings or progress:', settingsError);
+         // Continue with default settings if this fails
+      }
+      
+      // Display the player with the sources we have
       displayEpisodePlayer(sources, showId, episodeNumber, showMeta, preferredSource, progress);
    } catch (error) {
-      console.error('Error fetching video links:', error);
-      playerContainer.innerHTML = `<p class="error">Could not load video sources.</p>`;
+      console.error('Error in fetchVideoLinks:', error);
+      playerContainer.innerHTML = `<p class="error">Could not load video player. Please try refreshing the page.</p>`;
    }
 }
 function displayEpisodePlayer(sources, showId, episodeNumber, showMeta, preferredSource, progress) {
+   console.log('displayEpisodePlayer called with:', showId, episodeNumber, preferredSource);
    const playerSection = document.getElementById('player-section-container');
    if (!playerSection) return;
    const playIcon = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
@@ -1366,9 +1627,30 @@ function displayEpisodePlayer(sources, showId, episodeNumber, showMeta, preferre
 }
 
 function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSource, progress) {
+   console.log('initCustomPlayer called with:', showId, episodeNumber, preferredSource);
+   // Validate required elements
    const playerContent = document.getElementById('player-content');
    const video = document.getElementById('videoPlayer');
    const controlsContainer = document.getElementById('video-controls-container');
+   
+   if (!playerContent || !video || !controlsContainer) {
+      console.error('Critical player elements not found');
+      const playerSection = document.getElementById('player-section-container');
+      if (playerSection) {
+         playerSection.innerHTML = `<p class="error">Could not initialize video player. Missing required elements.</p>`;
+      }
+      return;
+   }
+   
+   // Validate sources
+   if (!sources || (Array.isArray(sources) && sources.length === 0)) {
+      console.error('No video sources provided to player');
+      const playerSection = document.getElementById('player-section-container');
+      if (playerSection) {
+         playerSection.innerHTML = `<p class="error">No video sources available for this episode.</p>`;
+      }
+      return;
+   }
    const playPauseBtn = document.getElementById('play-pause-btn');
    const seekBackwardBtn = document.getElementById('seek-backward-btn');
    const seekForwardBtn = document.getElementById('seek-forward-btn');
@@ -1633,17 +1915,17 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
 
     if (videoProgressUpdateTimer) clearInterval(videoProgressUpdateTimer);
     videoProgressUpdateTimer = setInterval(() => {
-        if (!video.paused && video.duration > 0) {
-            fetchWithProfile('/update-progress', {
+        if (!video.paused && video.duration > 0 && currentUser) {
+            // Persist progress only for logged-in users through API designed for Firebase user
+            fetchWithProfile('/api/users/me/watched-episodes', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    showId,
-                    episodeNumber,
-                    currentTime: video.currentTime,
-                    duration: video.duration,
-                    showName: showMeta.name,
-                    showThumbnail: showMeta.thumbnail,
+                    show_id: showId,
+                    episode_id: episodeNumber,
+                    progress: Math.min(video.currentTime / Math.max(1, video.duration), 1),
+                    show_name: showMeta.name,
+                    show_thumbnail: showMeta.thumbnail
                 })
             });
         }
@@ -1997,6 +2279,7 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
    });
 
 function playVideo(sourceName, linkInfo, subtitleInfo) {
+	console.log('playVideo called with source:', sourceName, 'linkInfo:', linkInfo);
 	if (currentHlsInstance) {
 		currentHlsInstance.destroy();
 		currentHlsInstance = null;
@@ -2132,6 +2415,7 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 }
 
 async function setPreferredSource(sourceName) {
+   console.log('setPreferredSource called with:', sourceName);
    try {
       const response = await fetchWithProfile('/settings', {
          method: 'POST',
@@ -2145,60 +2429,222 @@ async function setPreferredSource(sourceName) {
    }
 }
 async function markEpisodeWatched(showId, episodeNumber) {
-   await fetchWithProfile('/update-progress', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ showId, episodeNumber, currentTime: 1, duration: 1 })
-    });
+   console.log('markEpisodeWatched called with:', showId, episodeNumber);
+   if (!currentUser) return;
+   try {
+      const showMetaResponse = await fetch(`/show-meta/${showId}`);
+      const showMeta = await showMetaResponse.json();
+      await fetchWithProfile('/api/users/me/watched-episodes', {
+         method: 'POST',
+         headers: {'Content-Type': 'application/json'},
+         body: JSON.stringify({
+            show_id: showId,
+            episode_id: episodeNumber,
+            progress: 1,
+            show_name: showMeta.name,
+            show_thumbnail: showMeta.thumbnail
+         })
+      });
+   } catch (error) {
+      console.error('Error updating watched episode in database:', error);
+   }
    const epItem = document.querySelector(`#episode-grid-player .result-item[data-episode='${episodeNumber}']`);
-   if (epItem) epItem.classList.add('watched');
+   if (epItem) {
+      console.log(`Adding watched class to episode ${episodeNumber}`);
+      epItem.classList.add('watched');
+   }
 }
 
 async function renderSettingsPage() {
-    const nameInput = document.getElementById('profile-name-input');
-    const picPreview = document.getElementById('settings-profile-pic');
-    const picUpload = document.getElementById('profile-pic-upload');
-    const saveBtn = document.getElementById('save-profile-settings-btn');
+    if (!currentUser) {
+        // Redirect to home if not logged in
+        navigateTo('#home');
+        return;
+    }
     
+    const settingsContainer = document.querySelector('#settings-page .settings-container');
+    if (!settingsContainer) return;
+    
+    // Update settings page to use Firebase authentication
+    settingsContainer.innerHTML = `
+        <div class="settings-card">
+            <h3>Account Settings</h3>
+            <div id="account-settings-form">
+                <div class="profile-picture-section">
+                    <img id="settings-profile-pic" src="${DEFAULT_PROFILE_PIC}" alt="Profile Picture" loading="lazy">
+                    <label for="settings-pic-upload" class="upload-btn">
+                        <svg fill="currentColor" viewBox="0 0 20 20"><path d="M13 10V3L4 14h7v7l9-11h-7z" clip-rule="evenodd" fill-rule="evenodd"></path></svg>
+                        Change Picture
+                    </label>
+                    <input type="file" id="settings-pic-upload" accept="image/png, image/jpeg, image/gif" style="display:none;">
+                </div>
+                <div class="form-group">
+                    <label for="settings-name-input">Display Name</label>
+                    <input type="text" id="settings-name-input" class="settings-input">
+                </div>
+                <div class="form-group">
+                    <label for="settings-email-input">Email</label>
+                    <input type="email" id="settings-email-input" class="settings-input" disabled>
+                </div>
+                <button id="save-settings-btn" class="settings-save-btn">Save Changes</button>
+            </div>
+        </div>
+        <div class="settings-card">
+            <h3>Watch History</h3>
+            <p>Clear your watch history to reset which episodes you've watched.</p>
+            <button id="clear-history-btn" class="settings-delete-btn">Clear Watch History</button>
+        </div>
+        <div class="settings-card">
+            <h3>Account Management</h3>
+            <p>Sign out from all devices or delete your account permanently.</p>
+            <div class="settings-buttons-row">
+                <button id="sign-out-all-btn" class="settings-btn">Sign Out Everywhere</button>
+                <button id="delete-account-btn" class="settings-delete-btn">Delete Account</button>
+            </div>
+        </div>
+    `;
+    
+    // Load user data
     try {
-        const response = await fetchWithProfile(`/api/profiles/${activeProfileId}`);
-        const profile = await response.json();
+        const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
+        userRef.once('value', (snapshot) => {
+            const userData = snapshot.val() || {};
+            
+            // Set current values
+            const nameInput = document.getElementById('settings-name-input');
+            const emailInput = document.getElementById('settings-email-input');
+            const profilePic = document.getElementById('settings-profile-pic');
+            
+            if (nameInput) nameInput.value = userData.displayName || '';
+            if (emailInput) emailInput.value = currentUser.email || 'Guest User';
+            if (profilePic && userData.photoURL) profilePic.src = userData.photoURL;
+        });
         
-        nameInput.value = profile.name;
-        picPreview.src = profile.picture_path ? `${profile.picture_path}?t=${new Date().getTime()}` : '/profile_pics/default.png';
-
-        picUpload.onchange = () => {
-            if (picUpload.files && picUpload.files[0]) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    picPreview.src = e.target.result;
+        // Setup event listeners
+        const picUpload = document.getElementById('settings-pic-upload');
+        const picPreview = document.getElementById('settings-profile-pic');
+        const saveBtn = document.getElementById('save-settings-btn');
+        const clearHistoryBtn = document.getElementById('clear-history-btn');
+        const signOutAllBtn = document.getElementById('sign-out-all-btn');
+        const deleteAccountBtn = document.getElementById('delete-account-btn');
+        
+        // Profile picture upload preview
+        if (picUpload && picPreview) {
+            picUpload.onchange = () => {
+                if (picUpload.files && picUpload.files[0]) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        picPreview.src = e.target.result;
+                    };
+                    reader.readAsDataURL(picUpload.files[0]);
                 }
-                reader.readAsDataURL(picUpload.files[0]);
-            }
-        };
-
-        saveBtn.onclick = async () => {
-            const newName = nameInput.value.trim();
-            if (newName && newName !== profile.name) {
-                await fetchWithProfile(`/api/profiles/${activeProfileId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: newName })
-                });
-            }
-
-            if (picUpload.files && picUpload.files[0]) {
-                const formData = new FormData();
-                formData.append('profilePic', picUpload.files[0]);
-                await fetchWithProfile(`/api/profiles/${activeProfileId}/picture`, {
-                    method: 'POST',
-                    body: formData
-                });
-            }
-            alert('Profile updated!');
-            await initProfileSystem();
-        };
-
+            };
+        }
+        
+        // Save settings
+        if (saveBtn) {
+            saveBtn.onclick = async () => {
+                try {
+                    const nameInput = document.getElementById('settings-name-input');
+                    const displayName = nameInput.value.trim();
+                    
+                    // Update display name
+                    if (displayName) {
+                        await firebaseDb.ref(`users/${currentUser.uid}/displayName`).set(displayName);
+                    }
+                    
+                    // Upload profile picture if selected
+                    if (picUpload && picUpload.files && picUpload.files[0]) {
+                        const file = picUpload.files[0];
+                        const storageRef = firebaseStorage.ref();
+                        const fileRef = storageRef.child(`profile_pics/${currentUser.uid}`);
+                        
+                        // Upload file
+                        await fileRef.put(file);
+                        
+                        // Get download URL
+                        const photoURL = await fileRef.getDownloadURL();
+                        
+                        // Update user profile
+                        await firebaseDb.ref(`users/${currentUser.uid}/photoURL`).set(photoURL);
+                    }
+                    
+                    alert('Settings updated successfully!');
+                } catch (error) {
+                    console.error('Error updating settings:', error);
+                    alert(`Error updating settings: ${error.message}`);
+                }
+            };
+        }
+        
+        // Clear watch history
+        if (clearHistoryBtn) {
+            clearHistoryBtn.onclick = async () => {
+                if (confirm('Are you sure you want to clear your watch history? This cannot be undone.')) {
+                    try {
+                        await firebaseDb.ref(`users/${currentUser.uid}/watchedEpisodes`).remove();
+                        alert('Watch history cleared successfully!');
+                    } catch (error) {
+                        console.error('Error clearing watch history:', error);
+                        alert(`Error clearing watch history: ${error.message}`);
+                    }
+                }
+            };
+        }
+        
+        // Sign out from all devices
+        if (signOutAllBtn) {
+            signOutAllBtn.onclick = async () => {
+                if (confirm('Are you sure you want to sign out from all devices?')) {
+                    try {
+                        await firebase.auth().signOut();
+                        alert('You have been signed out from all devices.');
+                        navigateTo('#home');
+                    } catch (error) {
+                        console.error('Error signing out:', error);
+                        alert(`Error signing out: ${error.message}`);
+                    }
+                }
+            };
+        }
+        
+        // Delete account
+        if (deleteAccountBtn) {
+            deleteAccountBtn.onclick = async () => {
+                if (confirm('Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently deleted.')) {
+                    try {
+                        // Delete user data from Firebase
+                        await firebaseDb.ref(`users/${currentUser.uid}`).remove();
+                        
+                        // Delete profile picture from storage if exists
+                        try {
+                            const storageRef = firebaseStorage.ref();
+                            const fileRef = storageRef.child(`profile_pics/${currentUser.uid}`);
+                            await fileRef.delete();
+                        } catch (storageError) {
+                            console.log('No profile picture to delete or error:', storageError);
+                        }
+                        
+                        // Delete user account
+                        await currentUser.delete();
+                        
+                        alert('Your account has been deleted successfully.');
+                        navigateTo('#home');
+                    } catch (error) {
+                        console.error('Error deleting account:', error);
+                        
+                        // If error is due to recent login required
+                        if (error.code === 'auth/requires-recent-login') {
+                            alert('For security reasons, please sign in again before deleting your account.');
+                            await firebase.auth().signOut();
+                            navigateTo('#home');
+                        } else {
+                            alert(`Error deleting account: ${error.message}`);
+                        }
+                    }
+                }
+            };
+        }
     } catch (error) {
         console.error("Failed to load settings page:", error);
     }
