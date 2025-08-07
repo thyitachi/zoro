@@ -1948,6 +1948,22 @@ footer a:hover {
     .menu-toggle, .mobile-search-btn {
        display: block;
     }
+    /* Add dropdown styling for nav when toggled */
+    nav {
+       flex-direction: column;
+       width: 100%;
+       position: absolute;
+       top: 100%;
+       left: 0;
+       right: 0;
+       background-color: var(--secondary-bg);
+       z-index: 100;
+       padding: 10px;
+       box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    nav.active {
+       display: flex;
+    }
 }
 
 @media (max-width: 768px) {
@@ -2024,7 +2040,7 @@ footer a:hover {
        align-items: stretch;
     }
     #searchInput, .search-filters select, .search-filters button {
-       width: 100%;
+       width: auto;
     }
     .bottom-controls {
        flex-wrap: wrap;
