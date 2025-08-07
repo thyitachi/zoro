@@ -1944,7 +1944,9 @@ footer a:hover {
     nav {
        display: none;
     }
-    /* Menu toggle and mobile search button display is now handled in the 850px media query */
+    .menu-toggle, .mobile-search-btn {
+       display: block;
+    }
 }
 
 @media (max-width: 768px) {
