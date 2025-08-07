@@ -30,63 +30,128 @@ const DEFAULT_PROFILE_PIC = '/profile_pics/default.png';
 firebase.auth().onAuthStateChanged((user) => {
   currentUser = user;
   if (user) {
-    console.log('User is signed in:', user.uid);
-    // Load user data from Firebase
+    console.log('User is signed in:', user.uid, 'email:', user.email || '(none)');
+
+    // Immediately reflect Firebase-stored avatar in the header (do not wait for SQLite)
+    try {
+      firebaseDb.ref(`users/${user.uid}/photoURL`).once('value').then(snap => {
+        const fbPhoto = snap.val();
+        if (fbPhoto && typeof fbPhoto === 'string') {
+          const avatar = document.getElementById('profile-avatar');
+          const dropdownAvatar = document.getElementById('dropdown-avatar');
+          if (avatar) avatar.src = fbPhoto;
+          if (dropdownAvatar) dropdownAvatar.src = fbPhoto;
+        }
+      }).catch(()=>{});
+    } catch (_) {}
+
+    // Load user data from SQLite
     loadUserData();
+
     // Update UI to show user is logged in
     updateAuthUI(true);
+
     // Refresh the continue watching section with Firebase data
     fetchAndDisplayContinueWatching();
+
+    // Refresh the current page if it's the settings page
+    if (window.location.hash === '#settings') {
+      renderSettingsPage();
+    }
   } else {
     console.log('User is signed out');
     // Update UI to show user is logged out
     updateAuthUI(false);
     // Refresh the continue watching section with local data
     fetchAndDisplayContinueWatching();
+    // Refresh the current page if it's the settings page
+    if (window.location.hash === '#settings') {
+      renderSettingsPage();
+    }
   }
 });
 
-// Load user data from Firebase
+// Load user data from SQLite via API
 async function loadUserData() {
    console.log('loadUserData called with currentUser:', currentUser ? 'Yes' : 'No');
    if (!currentUser) return;
    
    try {
-      const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
-      userRef.on('value', (snapshot) => {
-         const userData = snapshot.val() || {};
-         console.log('User data loaded:', userData);
+      // Fetch user data from SQLite database
+      const response = await fetchWithProfile('/api/user-profile');
       
-      // Initialize user data if it doesn't exist
-      if (!userData.displayName || !userData.watchedEpisodes) {
-        initializeUserData();
+      if (response.ok) {
+         const userData = await response.json();
+         console.log('User data loaded from SQLite:', userData);
+
+         // If SQLite record has missing/default photo, try to sync from Firebase to keep header persistent
+         try {
+           const fbSnap = await firebaseDb.ref(`users/${currentUser.uid}/photoURL`).once('value');
+           const fbPhoto = fbSnap.val();
+           const isDefault = !userData?.photoURL || userData.photoURL === DEFAULT_PROFILE_PIC || userData.photoURL === '/profile_pics/default.png';
+           if (fbPhoto && typeof fbPhoto === 'string') {
+             if (isDefault || userData.photoURL !== fbPhoto) {
+               // Sync to server for persistence
+               await fetchWithProfile('/api/update-profile-photo', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({ photoURL: fbPhoto })
+               });
+               userData.photoURL = fbPhoto;
+             }
+           }
+         } catch (e) {
+           console.warn('Could not sync Firebase photoURL to server:', e);
+         }
+         
+         // Initialize user data if it doesn't exist
+         if (!userData || !userData.displayName) {
+            initializeUserData();
+         } else {
+            // Update profile display with user data
+            updateProfileDisplay(userData);
+         }
+      } else if (response.status === 404) {
+         // User not found in SQLite, initialize
+         initializeUserData();
+      } else {
+         console.error('Error loading user data from SQLite:', response.statusText);
       }
-      
-      // Update profile display with user data
-      updateProfileDisplay(userData);
-    });
-  } catch (error) {
-    console.error('Error loading user data:', error);
-  }
+   } catch (error) {
+      console.error('Error loading user data:', error);
+   }
 }
 
-// Initialize user data in Firebase
+// Initialize user data in SQLite
 async function initializeUserData() {
    console.log('initializeUserData called with currentUser:', currentUser ? 'Yes' : 'No');
    if (!currentUser) return;
    
    try {
-      const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
+      // Get Google profile picture or use initials if not available
+      let photoURL = currentUser.photoURL || DEFAULT_PROFILE_PIC;
+      
       const userData = {
          email: currentUser.email,
          displayName: currentUser.displayName || currentUser.email.split('@')[0],
-         photoURL: currentUser.photoURL || DEFAULT_PROFILE_PIC,
-         createdAt: firebase.database.ServerValue.TIMESTAMP,
-         watchedEpisodes: {}
+         photoURL: photoURL
       };
       
-      await userRef.update(userData);
-      console.log('User data initialized');
+      // Update user profile in SQLite
+      const response = await fetchWithProfile('/api/update-profile', {
+         method: 'POST',
+         headers: {
+            'Content-Type': 'application/json'
+         },
+         body: JSON.stringify(userData)
+      });
+      
+      if (response.ok) {
+         console.log('User data initialized in SQLite');
+         updateProfileDisplay(userData);
+      } else {
+         console.error('Error initializing user data in SQLite:', response.statusText);
+      }
    } catch (error) {
       console.error('Error initializing user data:', error);
    }
@@ -103,7 +168,18 @@ function updateAuthUI(isLoggedIn) {
    if (isLoggedIn && currentUser) {
      if (loginBtnEl) loginBtnEl.style.display = 'none';
      if (userContainer) userContainer.style.display = 'flex';
-     if (userEmail) userEmail.textContent = currentUser.email || 'Logged in';
+     // Prefer display name from Firebase profile node, fallback to auth displayName, then email
+     const setName = async () => {
+       let name = '';
+       try {
+         const snap = await firebaseDb.ref(`users/${currentUser.uid}/displayName`).once('value');
+         name = snap.val() || currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'User');
+       } catch (_) {
+         name = currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'User');
+       }
+       if (userEmail) userEmail.textContent = name;
+     };
+     setName();
      if (profileArea) profileArea.style.display = 'flex';
    } else {
      if (loginBtnEl) loginBtnEl.style.display = 'inline-block';
@@ -116,11 +192,16 @@ async function fetchWithProfile(url, options = {}) {
    console.log('fetchWithProfile called with:', url, 'currentUser:', currentUser ? 'Yes' : 'No');
    const newOptions = { ...options };
    if (!newOptions.headers) newOptions.headers = {};
-   // Only pass Firebase user ID; no local profile fallback
+   // Include Firebase user identity and hints for backend upserts
    if (currentUser) {
-      newOptions.headers['X-User-ID'] = currentUser.uid;
+      // Always set headers explicitly as strings to avoid header casing issues
+      newOptions.headers['X-User-ID'] = String(currentUser.uid || '');
+      if (currentUser.email) newOptions.headers['X-User-Email'] = String(currentUser.email || '');
+      const dn = currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : '');
+      if (dn) newOptions.headers['X-User-Name'] = String(dn);
    }
-   if (newOptions.body && typeof newOptions.body === 'string' && !newOptions.headers['Content-Type']) {
+   // Avoid overriding FormData content-type; only set JSON when body is a string
+   if (typeof newOptions.body === 'string' && !newOptions.headers['Content-Type']) {
       newOptions.headers['Content-Type'] = 'application/json';
    }
    try {
@@ -199,14 +280,13 @@ function setupFirebaseAuth() {
    const authContainer = document.createElement('div');
    authContainer.className = 'auth-container';
    authContainer.innerHTML = `
-      <div id="auth-status-container">
-         <button id="login-btn" class="auth-btn">Login</button>
-         <div id="user-container" style="display: none;">
-            <span id="user-email"></span>
-            <button id="logout-btn" class="auth-btn">Logout</button>
-         </div>
-      </div>
-      <div id="auth-modal" class="modal" style="display: none;">
+          <div id="auth-status-container">
+             <button id="login-btn" class="auth-btn">Login</button>
+             <div id="user-container" style="display: none;">
+                <span id="user-email"></span>
+             </div>
+          </div>
+          <div id="auth-modal" class="modal" style="display: none;">
          <div class="modal-content">
             <span class="close-modal">&times;</span>
             <h2 id="auth-modal-title">Login</h2>
@@ -277,7 +357,6 @@ function setupFirebaseAuth() {
    
    // Setup event listeners for auth buttons
    const loginBtn = document.getElementById('login-btn');
-   const logoutBtn = document.getElementById('logout-btn');
    const logoutDropdownBtn = document.getElementById('logout-dropdown-btn');
    const authModal = document.getElementById('auth-modal');
    const closeModal = document.querySelector('.close-modal');
@@ -321,22 +400,10 @@ function setupFirebaseAuth() {
    
    // Edit profile button
    if (editProfileBtn) {
-      editProfileBtn.addEventListener('click', () => {
-         if (!currentUser) return;
-         
-         // Load current user data
-         const userRef = firebaseDb.ref(`users/${currentUser.uid}`);
-         userRef.once('value', (snapshot) => {
-            const userData = snapshot.val() || {};
-            
-            // Set current values
-            displayNameInput.value = userData.displayName || '';
-            profilePicPreview.src = userData.photoURL || DEFAULT_PROFILE_PIC;
-            
-            // Show modal
-            profilePicModal.style.display = 'block';
-            profileDropdown.classList.remove('active');
-         });
+      editProfileBtn.addEventListener('click', async () => {
+         // Navigate to Settings page instead of opening modal
+         navigateTo('#settings');
+         if (profileDropdown) profileDropdown.classList.remove('active');
       });
    }
    
@@ -356,30 +423,66 @@ function setupFirebaseAuth() {
    // Save profile picture and display name
    if (saveProfilePicBtn) {
       saveProfilePicBtn.addEventListener('click', async () => {
-         if (!currentUser) return;
+         if (!currentUser) {
+            alert('You must be logged in to update your profile.');
+            return;
+         }
          
          try {
             // Update display name
             const displayName = displayNameInput.value.trim();
             if (displayName) {
-               await firebaseDb.ref(`users/${currentUser.uid}/displayName`).set(displayName);
+               // Update display name in SQLite
+               await fetchWithProfile('/api/update-profile', {
+                  method: 'POST',
+                  headers: {
+                     'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                     displayName: displayName,
+                     email: currentUser.email
+                  })
+               });
             }
             
             // Upload profile picture if selected
             if (profilePicUpload.files && profilePicUpload.files[0]) {
-               const file = profilePicUpload.files[0];
-               const storageRef = firebaseStorage.ref();
-               const fileRef = storageRef.child(`profile_pics/${currentUser.uid}`);
-               
-               // Upload file
-               await fileRef.put(file);
-               
-               // Get download URL
-               const photoURL = await fileRef.getDownloadURL();
-               
-               // Update user profile
-               await firebaseDb.ref(`users/${currentUser.uid}/photoURL`).set(photoURL);
+                const file = profilePicUpload.files[0];
+                const formData = new FormData();
+                formData.append('file', file);
+                // Provide ext hint for safer filename selection on server
+                const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+                formData.append('ext', ['jpg','jpeg','png','gif'].includes(ext) ? ext : 'png');
+                if (currentUser?.uid) formData.append('uid', currentUser.uid);
+
+                const response = await fetchWithProfile('/api/upload-profile-pic', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const t = await response.text().catch(()=> '');
+                    throw new Error(`Failed to upload profile picture. ${t || ''}`);
+                }
+                
+                const { url: photoURL } = await response.json();
+                // Update UI immediately
+                const avatar = document.getElementById('profile-avatar');
+                const dropdownAvatar = document.getElementById('dropdown-avatar');
+                if (avatar) avatar.src = photoURL;
+                if (dropdownAvatar) dropdownAvatar.src = photoURL;
+                // Reflect in settings image too if present
+                const settingsAvatar = document.getElementById('settings-profile-pic');
+                if (settingsAvatar) settingsAvatar.src = photoURL;
+
+                // Also mirror to Firebase profile node for client consistency
+                if (currentUser?.uid) {
+                    await firebaseDb.ref(`users/${currentUser.uid}/photoURL`).set(photoURL);
+                }
             }
+            
+            // Reload user data to update UI
+            await loadUserData();
             
             // Close modal
             profilePicModal.style.display = 'none';
@@ -412,7 +515,6 @@ function setupFirebaseAuth() {
       });
    };
    
-   logoutBtn.addEventListener('click', handleLogout);
    if (logoutDropdownBtn) {
       logoutDropdownBtn.addEventListener('click', handleLogout);
    }
@@ -479,7 +581,7 @@ function setupMobileMenu() {
    }
 }
 
-// Update profile display with user data from Firebase
+// Update profile display with user data from SQLite
 function updateProfileDisplay(userData) {
     console.log('updateProfileDisplay called with userData:', userData);
     if (!currentUser || !userData) return;
@@ -2456,14 +2558,46 @@ async function markEpisodeWatched(showId, episodeNumber) {
 }
 
 async function renderSettingsPage() {
-    if (!currentUser) {
-        // Redirect to home if not logged in
-        navigateTo('#home');
-        return;
-    }
-    
     const settingsContainer = document.querySelector('#settings-page .settings-container');
     if (!settingsContainer) return;
+    
+    if (!currentUser) {
+        // Show login prompt for non-logged in users instead of redirecting
+        settingsContainer.innerHTML = `
+            <div class="settings-card">
+                <h3>Account Required</h3>
+                <p>Please log in to access your settings.</p>
+                <div class="settings-buttons-row">
+                    <button id="settings-login-btn" class="settings-btn">Log In</button>
+                </div>
+            </div>
+        `;
+        
+        // Wire up login button after DOM is updated
+        setTimeout(() => {
+            const openAuthModal = () => {
+                const authModal = document.getElementById('auth-modal');
+                if (authModal) {
+                    authModal.style.display = 'block';
+                    const title = document.getElementById('auth-modal-title');
+                    const googleForm = document.getElementById('google-auth-form');
+                    const anonForm = document.getElementById('anonymous-auth-form');
+                    if (title) title.textContent = 'Login';
+                    if (googleForm) googleForm.style.display = 'block';
+                    if (anonForm) anonForm.style.display = 'none';
+                } else {
+                    // Fallback: trigger the main Login button in header
+                    const headerLoginBtn = document.getElementById('login-btn');
+                    if (headerLoginBtn) headerLoginBtn.click();
+                }
+            };
+
+            const loginBtn = document.getElementById('settings-login-btn');
+            if (loginBtn) loginBtn.addEventListener('click', openAuthModal);
+        }, 0);
+        
+        return;
+    }
     
     // Update settings page to use Firebase authentication
     settingsContainer.innerHTML = `
@@ -2528,15 +2662,26 @@ async function renderSettingsPage() {
         const signOutAllBtn = document.getElementById('sign-out-all-btn');
         const deleteAccountBtn = document.getElementById('delete-account-btn');
         
-        // Profile picture upload preview
+        // Profile picture upload preview + basic validation
         if (picUpload && picPreview) {
             picUpload.onchange = () => {
                 if (picUpload.files && picUpload.files[0]) {
+                    const file = picUpload.files[0];
+                    const validTypes = ['image/png','image/jpeg','image/gif'];
+                    const maxSize = 5 * 1024 * 1024;
+                    if (!validTypes.includes(file.type)) {
+                        alert('Please select a PNG, JPEG, or GIF image.');
+                        picUpload.value = '';
+                        return;
+                    }
+                    if (file.size > maxSize) {
+                        alert('Selected file is too large. Maximum size is 5 MB.');
+                        picUpload.value = '';
+                        return;
+                    }
                     const reader = new FileReader();
-                    reader.onload = (e) => {
-                        picPreview.src = e.target.result;
-                    };
-                    reader.readAsDataURL(picUpload.files[0]);
+                    reader.onload = (e) => { picPreview.src = e.target.result; };
+                    reader.readAsDataURL(file);
                 }
             };
         }
@@ -2544,6 +2689,10 @@ async function renderSettingsPage() {
         // Save settings
         if (saveBtn) {
             saveBtn.onclick = async () => {
+                if (!currentUser) {
+                    alert('You must be logged in to save settings.');
+                    return;
+                }
                 try {
                     const nameInput = document.getElementById('settings-name-input');
                     const displayName = nameInput.value.trim();
@@ -2553,20 +2702,37 @@ async function renderSettingsPage() {
                         await firebaseDb.ref(`users/${currentUser.uid}/displayName`).set(displayName);
                     }
                     
-                    // Upload profile picture if selected
+                    // Upload profile picture if selected (via server)
                     if (picUpload && picUpload.files && picUpload.files[0]) {
                         const file = picUpload.files[0];
-                        const storageRef = firebaseStorage.ref();
-                        const fileRef = storageRef.child(`profile_pics/${currentUser.uid}`);
-                        
-                        // Upload file
-                        await fileRef.put(file);
-                        
-                        // Get download URL
-                        const photoURL = await fileRef.getDownloadURL();
-                        
-                        // Update user profile
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+                        formData.append('ext', ['jpg','jpeg','png','gif'].includes(ext) ? ext : 'png');
+                        formData.append('uid', currentUser.uid);
+
+                        const response = await fetchWithProfile('/api/upload-profile-pic', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        if (!response.ok) {
+                            const t = await response.text().catch(()=> '');
+                            throw new Error(`Server responded with ${response.status}: ${t || response.statusText}`);
+                        }
+
+                        const result = await response.json();
+                        const photoURL = result.url;
+
+                        // Update user profile in Firebase
                         await firebaseDb.ref(`users/${currentUser.uid}/photoURL`).set(photoURL);
+
+                        // Update the profile avatar in the UI
+                        const profileAvatar = document.getElementById('profile-avatar');
+                        const dropdownAvatar = document.getElementById('dropdown-avatar');
+                        if (profileAvatar) profileAvatar.src = photoURL;
+                        if (dropdownAvatar) dropdownAvatar.src = photoURL;
+                        if (picPreview) picPreview.src = photoURL;
                     }
                     
                     alert('Settings updated successfully!');

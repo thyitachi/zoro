@@ -5,9 +5,64 @@ const NodeCache = require('node-cache');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const cors = require('cors');
+const sqlite3 = require('sqlite3').verbose();
 const app = express();
-const port = process.env.PORT || 3000;
+
+app.use(cors());
+
+// Ensure user identity hints are available to ALL routes
+app.use((req, res, next) => {
+  const h = req.headers || {};
+  const val = (k) => h[k] ?? h[k?.toLowerCase?.()] ?? h[k?.toUpperCase?.()];
+  const uid = val('x-user-id');
+  if (uid) req.userId = uid;
+  req.userEmail = val('x-user-email') || null;
+  req.userName = val('x-user-name') || null;
+  next();
+});
+
+// Force port 3001 regardless of environment variable (as requested)
+const port = 3001;
 const apiCache = new NodeCache({ stdTTL: 3600 });
+
+// Initialize SQLite database
+const db = new sqlite3.Database('./anime.db', (err) => {
+    if (err) {
+        console.error('Error opening database:', err.message);
+    } else {
+        console.log('Connected to the SQLite database');
+        // Create users table if it doesn't exist
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            displayName TEXT,
+            photoURL TEXT,
+            createdAt INTEGER
+        )`);
+
+        // Ensure users table has photoURL column (migrate older DBs without it)
+        db.get("PRAGMA table_info(users)", (e, row) => {
+            // no-op; use separate pragma to check columns
+        });
+        db.all("PRAGMA table_info(users)", (err, columns) => {
+            if (err) {
+                console.error('Error reading users table schema:', err);
+                return;
+            }
+            const hasPhotoURL = Array.isArray(columns) && columns.some(c => c.name === 'photoURL');
+            if (!hasPhotoURL) {
+                db.run("ALTER TABLE users ADD COLUMN photoURL TEXT", (alterErr) => {
+                    if (alterErr) {
+                        console.error('Failed to add photoURL column to users table:', alterErr);
+                    } else {
+                        console.log('Added photoURL column to users table.');
+                    }
+                });
+            }
+        });
+    }
+});
 
 // Use local directory for profile pictures
 const profilePicsDir = path.join(__dirname, 'public', 'profile_pics');
@@ -16,18 +71,200 @@ if (!fs.existsSync(profilePicsDir)) {
     fs.mkdirSync(profilePicsDir, { recursive: true });
 }
 
-// NOTE: Local profiles/SQLite have been removed. App relies on Firebase user only.
+// Add endpoint for profile picture uploads
+const multer = require('multer');
+// Move auth header extractor BEFORE routes to ensure req.userId is available
+// (Place middleware registration near top before routes)
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 app.get('/favicon.ico', (req, res) => res.status(204).send());
 
-// Middleware to extract Firebase user ID from request headers (no local profile support)
-app.use((req, res, next) => {
-    const userId = req.headers['x-user-id'] || req.headers['X-User-ID'] || req.headers['x-User-Id'];
-    if (userId) {
-        req.userId = userId;
+// API endpoint to get user profile from SQLite
+app.get('/api/user-profile', (req, res) => {
+    if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
     }
-    next();
+
+    db.get('SELECT * FROM users WHERE id = ?', [req.userId], (err, user) => {
+        if (err) {
+            console.error('Error fetching user profile:', err);
+            return res.status(500).json({ error: 'Failed to fetch user profile' });
+        }
+
+        if (!user) {
+            // Create minimal row so Edit Profile works and persists avatar on refresh
+            const email = req.userEmail || null;
+            const displayName = req.userName || (email ? email.split('@')[0] : null) || null;
+            const photoURL = '/profile_pics/default.png';
+            db.run(
+                'INSERT INTO users (id, email, displayName, photoURL, createdAt) VALUES (?, ?, ?, ?, ?)',
+                [req.userId, email, displayName, photoURL, Date.now()],
+                function(insertErr) {
+                    if (insertErr) {
+                        console.error('Error auto-creating user profile:', insertErr);
+                        return res.status(500).json({ error: 'Failed to create user profile' });
+                    }
+                    return res.json({ id: req.userId, email, displayName, photoURL, createdAt: Date.now() });
+                }
+            );
+            return;
+        }
+
+        res.json(user);
+    });
+});
+
+// API endpoint to update user profile in SQLite
+app.post('/api/update-profile', (req, res) => {
+    if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const { displayName, email } = req.body || {};
+    
+    if (!displayName) {
+        return res.status(400).json({ error: 'Display name is required' });
+    }
+    
+    db.run(
+        'UPDATE users SET displayName = ?, email = ? WHERE id = ?',
+        [displayName, email, req.userId],
+        function(err) {
+            if (err) {
+                console.error('Error updating user profile:', err);
+                return res.status(500).json({ error: 'Failed to update profile' });
+            }
+            
+            if (this.changes === 0) {
+                // User doesn't exist, create a new record
+                db.run(
+                    'INSERT INTO users (id, displayName, email, createdAt, photoURL) VALUES (?, ?, ?, ?, ?)',
+                    [req.userId, displayName, email, Date.now(), '/profile_pics/default.png'],
+                    function(err) {
+                        if (err) {
+                            console.error('Error creating user profile:', err);
+                            return res.status(500).json({ error: 'Failed to create profile' });
+                        }
+                        res.json({ success: true });
+                    }
+                );
+            } else {
+                res.json({ success: true });
+            }
+        }
+    );
+});
+
+// New: update only photoURL (used to sync header avatar from Firebase value on refresh)
+app.post('/api/update-profile-photo', (req, res) => {
+    if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { photoURL } = req.body || {};
+    if (!photoURL || typeof photoURL !== 'string') {
+        return res.status(400).json({ error: 'photoURL required' });
+    }
+    db.run('UPDATE users SET photoURL = ? WHERE id = ?', [photoURL, req.userId], function(err) {
+        if (err) {
+            console.error('Error updating photoURL:', err);
+            return res.status(500).json({ error: 'Failed to update photo' });
+        }
+        if (this.changes === 0) {
+            const email = null;
+            const displayName = null;
+            db.run(
+                'INSERT INTO users (id, email, displayName, photoURL, createdAt) VALUES (?, ?, ?, ?, ?)',
+                [req.userId, email, displayName, photoURL, Date.now()],
+                function(insertErr) {
+                    if (insertErr) {
+                        console.error('Error creating user for photo:', insertErr);
+                        return res.status(500).json({ error: 'Failed to create user' });
+                    }
+                    return res.json({ success: true });
+                }
+            );
+        } else {
+            return res.json({ success: true });
+        }
+    });
+});
+
+// (auth header middleware moved earlier)
+
+// Configure multer with memory storage and enforce MIME validation + safe extension
+const memoryUpload = multer({
+   storage: multer.memoryStorage(),
+   limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+});
+
+// Secure avatar upload endpoint with validation and deterministic filenames
+app.post('/api/upload-profile-pic', memoryUpload.single('file'), (req, res) => {
+   try {
+       const uid = req.userId || (req.body && req.body.uid);
+       if (!uid) return res.status(401).json({ error: 'Unauthorized' });
+       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+       const mime = req.file.mimetype || '';
+       const allowed = ['image/png', 'image/jpeg', 'image/gif'];
+       if (!allowed.includes(mime)) {
+           return res.status(400).json({ error: 'Unsupported image type' });
+       }
+
+       const guessedExt = mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'gif';
+       const providedExt = (req.body?.ext || '').toLowerCase();
+       const safeExt = ['jpg', 'jpeg', 'png', 'gif'].includes(providedExt) ? providedExt.replace('jpeg', 'jpg') : guessedExt;
+
+       const fileName = `${uid}.${safeExt}`;
+       const outPath = path.join(profilePicsDir, fileName);
+       fs.writeFileSync(outPath, req.file.buffer);
+
+       const fileUrl = `/profile_pics/${fileName}`;
+
+       // Try update first, fallback to insert with available metadata
+       db.run(
+           'UPDATE users SET photoURL = ? WHERE id = ?',
+           [fileUrl, uid],
+           function(err) {
+               if (err) {
+                   console.error('Error updating user profile in database:', err);
+                   return res.status(500).json({ error: 'Failed to update profile in database' });
+               }
+               if (this.changes === 0) {
+                   const email = req.userEmail || null;
+                   const displayName = req.userName || (email ? email.split('@')[0] : null) || null;
+                   db.run(
+                       'INSERT INTO users (id, email, displayName, photoURL, createdAt) VALUES (?, ?, ?, ?, ?)',
+                       [uid, email, displayName, fileUrl, Date.now()],
+                       function(insertErr) {
+                           if (insertErr) {
+                               console.error('Error creating user profile in database:', insertErr);
+                               return res.status(500).json({ error: 'Failed to create profile in database' });
+                           }
+                           return res.json({ url: fileUrl });
+                       }
+                   );
+               } else {
+                   return res.json({ url: fileUrl });
+               }
+           }
+       );
+   } catch (e) {
+       console.error('Upload avatar error:', e);
+       return res.status(500).json({ error: 'Upload failed' });
+   }
+});
+
+// Optional: endpoint to retrieve avatar URL for a given uid
+app.get('/api/users/:uid/avatar', (req, res) => {
+   db.get('SELECT photoURL FROM users WHERE id = ?', [req.params.uid], (err, row) => {
+       if (err) {
+           console.error('SQLite read error:', err);
+           return res.status(500).json({ error: 'Database error' });
+       }
+       if (!row) return res.status(404).json({ error: 'Not found' });
+       return res.json({ photoURL: row.photoURL });
+   });
 });
 
 // Add root route handler to serve index.html
@@ -846,5 +1083,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server running in ${process.env.NODE_ENV} mode on port ${port}`);
+  console.log(`Server is running on http://localhost:${port}`);
 });
