@@ -1940,6 +1940,12 @@ footer a:hover {
    }
 }
 
+@media (max-width: 850px) {
+    nav {
+       display: none;
+    }
+}
+
 @media (max-width: 768px) {
     .app-container {
        padding: 0 10px;
@@ -1978,12 +1984,6 @@ footer a:hover {
        display: none;
        flex-direction: column;
        width: 100%;
-    }
-    
-    @media (max-width: 850px) {
-       nav {
-          display: none;
-       }
     }
     nav.active {
        display: flex;
