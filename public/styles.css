@@ -1944,6 +1944,9 @@ footer a:hover {
     nav {
        display: none;
     }
+    .menu-toggle, .mobile-search-btn {
+       display: block;
+    }
 }
 
 @media (max-width: 768px) {
