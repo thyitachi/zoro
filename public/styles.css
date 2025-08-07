@@ -94,6 +94,7 @@ body {
    padding: 10px 0;
    border-bottom: 1px solid var(--border-color);
    flex-wrap: wrap;
+   position: relative;
 }
 
 .header-right {
@@ -1985,6 +1986,14 @@ footer a:hover {
        display: none;
        flex-direction: column;
        width: 100%;
+       position: absolute;
+       top: 100%;
+       left: 0;
+       right: 0;
+       background-color: var(--secondary-bg);
+       z-index: 100;
+       padding: 10px;
+       box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
     nav.active {
        display: flex;
