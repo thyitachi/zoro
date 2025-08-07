@@ -4,17 +4,17 @@
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="description" content="Watch the latest anime releases.">
-      <meta name="keywords" content="anime, streaming, watchlist, ani-web">
+      <meta name="keywords" content="anime, streaming, watchlist, zoro">
       <meta name="author" content="serifpersia">
       <meta name="apple-mobile-web-app-capable" content="yes">
       <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-      <meta property="og:title" content="ani-web">
+      <meta property="og:title" content="zoro">
       <meta property="og:description" content="Your go-to platform for anime streaming.">
       <meta property="og:image" content="logo.png">
-      <meta property="og:url" content="https://github.com/serifpersia/ani-web">
+      <meta property="og:url" content="https://github.com/thyitachi/zoro">
       <link rel="icon" type="image/x-icon" href="favicon.ico">
       <link rel="apple-touch-icon" href="webclip.png">
-      <title>ani-web</title>
+      <title>zoro</title>
       <link rel="stylesheet" href="styles.css" media="print" onload="this.media='all'">
       <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.5/dist/hls.min.js"></script>
       <!-- Firebase SDK -->
@@ -26,7 +26,13 @@
    <body>
       <div class="app-container" role="main">
          <header class="site-header">
-            <a href="#home"><img src="logo.png" alt="Ani-Web Logo" class="logo" loading="lazy"></a>
+            <a href="#home"><img src="logo.png" alt="Zoro Logo" class="logo" loading="lazy"></a>
+                     <nav role="navigation" aria-label="Main navigation">
+            <a href="#home">Home</a>
+            <a href="#search">Search</a>
+            <a href="#watchlist">Watchlist</a>
+            <a href="#settings">Settings</a>
+         </nav>
             <div class="mobile-controls">
                <button class="mobile-search-btn" aria-label="Search">
                   <svg viewBox="0 0 24 24" width="24" height="24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
@@ -57,12 +63,7 @@
                </button>
             </div>
          </header>
-         <nav role="navigation" aria-label="Main navigation">
-            <a href="#home">Home</a>
-            <a href="#search">Search</a>
-            <a href="#watchlist">Watchlist</a>
-            <a href="#settings">Settings</a>
-         </nav>
+
          <main>
             <div id="home-page" class="page">
                <div class="home-container">

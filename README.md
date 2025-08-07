@@ -1,4 +1,4 @@
-# ani-web
+# zoro
 
 A web application for streaming anime.
 

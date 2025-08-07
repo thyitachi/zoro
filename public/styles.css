@@ -253,10 +253,9 @@ nav {
    display: flex;
    justify-content: center;
    gap: 20px;
-   padding: 10px 0;
+   padding: 10px;
    background-color: var(--secondary-bg);
    border-radius: 8px;
-   margin-bottom: 20px;
    flex-wrap: wrap;
 }
 
@@ -1918,9 +1917,6 @@ footer a:hover {
       position: static;
       max-height: 300px;
    }
-   .logo {
-      height: 100px;
-   }
    .grid {
       grid-template-columns: repeat(3, 1fr);
    }
@@ -1982,6 +1978,12 @@ footer a:hover {
        display: none;
        flex-direction: column;
        width: 100%;
+    }
+    
+    @media (max-width: 850px) {
+       nav {
+          display: none;
+       }
     }
     nav.active {
        display: flex;
