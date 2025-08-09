@@ -990,79 +990,359 @@ app.get('/api/users/me/skip-times/:show_id/:episode_id', async (req, res) => {
 
 // API endpoint for direct video downloads
 app.get('/api/download-video', async (req, res) => {
-    const { url, referer, filename } = req.query;
+    let { url, referer, filename } = req.query;
     
     console.log('Download request received:');
-    console.log('- URL:', url ? 'Present' : 'Missing');
-    console.log('- Referer:', referer ? 'Present' : 'Missing');
+    console.log('- URL:', url ? url.substring(0, 100) + '...' : 'Missing');
+    console.log('- Referer:', referer ? referer.substring(0, 100) + '...' : 'Missing');
     console.log('- Filename:', filename || 'Not provided');
-    console.log('- Raw query string:', req.url.split('?')[1] || 'None');
-    console.log('- All query parameters:', JSON.stringify(req.query));
     
     if (!url) {
         return res.status(400).send('URL parameter is required');
     }
     
+    // Handle proxied URLs (when the URL is in the format /proxy?url=...)
+    if (url.startsWith('/proxy?url=')) {
+        try {
+            // Extract the actual URL from the proxy URL
+            const urlParams = new URLSearchParams(url.substring(url.indexOf('?')));
+            const actualUrl = urlParams.get('url');
+            const actualReferer = urlParams.get('referer');
+            
+            if (actualUrl) {
+                // Make sure to decode the URL properly
+                url = decodeURIComponent(actualUrl);
+                // If referer is not provided separately, use the one from the proxy URL
+                if (!referer && actualReferer) {
+                    referer = decodeURIComponent(actualReferer);
+                }
+                console.log('Extracted actual URL from proxy URL:', url.substring(0, 100) + '...');
+                console.log('- Extracted Referer:', referer ? referer.substring(0, 100) + '...' : 'None');
+            }
+        } catch (extractError) {
+            console.error('Error extracting URL from proxy:', extractError.message);
+            // Continue with the original URL if extraction fails
+        }
+    }
+    
+    // Handle m3u8 URLs for HLS streams
+    const isHlsStream = url.includes('.m3u8');
+    
     try {
         // Process the filename
         let downloadFilename = filename || 'video.mp4';
-        
-        // Ensure filename has .mp4 extension
-        if (!downloadFilename.toLowerCase().endsWith('.mp4')) {
-            downloadFilename += '.mp4';
+
+        // Determine file extension based on URL
+        let fileExtension = '.mp4'; // Default extension
+        if (isHlsStream) {
+            // We will remux by simple concatenation of segments into MPEG-TS
+            // so use .ts for compatibility without requiring ffmpeg
+            fileExtension = '.ts';
+        } else if (url.includes('.webm')) {
+            fileExtension = '.webm';
+        } else if (url.includes('.mkv')) {
+            fileExtension = '.mkv';
+        } else if (url.includes('.flv')) {
+            fileExtension = '.flv';
         }
-        
+
+        // Ensure filename has the correct extension
+        if (!downloadFilename.toLowerCase().endsWith(fileExtension)) {
+            // Remove any existing extension
+            downloadFilename = downloadFilename.replace(/\.[^/.]+$/, "") + fileExtension;
+        }
+
         // Force a simple ASCII filename for maximum compatibility
         const safeFilename = downloadFilename.replace(/[^a-zA-Z0-9_.-]/g, '_');
         console.log('Using safe filename:', safeFilename);
         
-        // Set appropriate headers for the request
-        const headers = { 
+        // Prepare headers common to remote requests
+        const baseHeaders = { 
             'User-Agent': userAgent,
             'Accept': '*/*',
             'Connection': 'keep-alive'
         };
-        
-        if (referer) {
-            headers['Referer'] = referer;
+        if (referer) baseHeaders['Referer'] = referer;
+
+        if (isHlsStream) {
+            // HLS: fetch playlist, choose highest quality, stream segments sequentially as TS
+            console.log('HLS download requested. Preparing segment stream...');
+
+            // Set download headers for TS stream
+            res.setHeader('Content-Type', 'video/MP2T');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+
+            // Helper to fetch text
+            const fetchText = async (targetUrl) => {
+                const { data } = await axios.get(targetUrl, { headers: baseHeaders, responseType: 'text', timeout: 20000 });
+                return data;
+            };
+
+            // Resolve a possibly relative URL against a base
+            const resolveUrl = (u, base) => new URL(u, base).href;
+
+            // Step 1/2: Resolve to final media playlist (handle nested masters or nested m3u8)
+            const initialPlaylistUrl = url;
+            let currentUrl = initialPlaylistUrl;
+            let mediaText = await fetchText(currentUrl);
+
+            const selectBestFromMaster = (text, baseUrl) => {
+                const lines = text.split('\n');
+                let bestHeight = -1;
+                let bestUri = null;
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (line.startsWith('#EXT-X-STREAM-INF')) {
+                        const resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
+                        const height = resMatch ? parseInt(resMatch[1], 10) : 0;
+                        const nextLine = lines[i + 1] || '';
+                        if (nextLine && !nextLine.startsWith('#')) {
+                            if (height > bestHeight) {
+                                bestHeight = height;
+                                bestUri = nextLine.trim();
+                            }
+                        }
+                    }
+                }
+                if (!bestUri) return null;
+                const resolved = resolveUrl(bestUri, baseUrl);
+                return { url: resolved, height: bestHeight };
+            };
+
+            // Try up to 3 levels of nesting to reach media playlist with segments
+            for (let depth = 0; depth < 3; depth++) {
+                if (/#EXT-X-STREAM-INF/.test(mediaText)) {
+                    const sel = selectBestFromMaster(mediaText, currentUrl);
+                    if (!sel) break;
+                    currentUrl = sel.url;
+                    console.log(`Selected HLS variant (depth ${depth}) height=${sel.height} url=${currentUrl.substring(0,120)}...`);
+                    mediaText = await fetchText(currentUrl);
+                    continue;
+                }
+                // If non-comment lines still reference another .m3u8, follow the first
+                const nonComment = mediaText.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+                const nextPlaylist = nonComment.find(l => /\.m3u8(\?|$)/.test(l));
+                if (nextPlaylist) {
+                    currentUrl = resolveUrl(nextPlaylist, currentUrl);
+                    console.log(`Following nested playlist (depth ${depth}) url=${currentUrl.substring(0,120)}...`);
+                    mediaText = await fetchText(currentUrl);
+                    continue;
+                }
+                break;
+            }
+
+            const mediaPlaylistUrl = currentUrl;
+            const mediaLines = mediaText.split('\n');
+            const baseForSegments = new URL(mediaPlaylistUrl);
+
+            // Optional: initialization segment via EXT-X-MAP
+            const mapLine = mediaLines.find(l => l.startsWith('#EXT-X-MAP:'));
+            if (mapLine) {
+                const uriMatch = mapLine.match(/URI="([^"]+)"/);
+                if (uriMatch) {
+                    const initUrl = resolveUrl(uriMatch[1], baseForSegments);
+                    const initResp = await axios.get(initUrl, { headers: baseHeaders, responseType: 'stream', timeout: 30000 });
+                    await new Promise((resolve, reject) => {
+                        initResp.data.on('error', reject);
+                        initResp.data.on('end', resolve);
+                        initResp.data.pipe(res, { end: false });
+                    });
+                }
+            }
+
+            // Collect segments strictly following #EXTINF tags to avoid nested manifests
+            const segmentUrls = [];
+            for (let i = 0; i < mediaLines.length; i++) {
+                const line = mediaLines[i].trim();
+                if (line.startsWith('#EXTINF')) {
+                    // Find next non-comment URI line
+                    let j = i + 1;
+                    while (j < mediaLines.length && mediaLines[j].trim().startsWith('#')) j++;
+                    if (j < mediaLines.length) {
+                        const uriLine = mediaLines[j].trim();
+                        if (uriLine && !uriLine.startsWith('#')) {
+                            segmentUrls.push(resolveUrl(uriLine, baseForSegments));
+                        }
+                    }
+                }
+            }
+
+            // If no EXTINF found, fallback to prior non-comment approach (rare edge cases)
+            if (segmentUrls.length === 0) {
+                for (let i = 0; i < mediaLines.length; i++) {
+                    const l = mediaLines[i].trim();
+                    if (!l || l.startsWith('#')) continue;
+                    segmentUrls.push(resolveUrl(l, baseForSegments));
+                }
+            }
+
+            // Optional: try to compute content-length for better browser UX
+            try {
+                const headSingle = async (u) => {
+                    const resp = await axios.head(u, { headers: baseHeaders, timeout: 20000, validateStatus: s => s >= 200 && s < 500 });
+                    const len = resp.headers['content-length'];
+                    return len ? parseInt(len, 10) : 0;
+                };
+                let totalBytes = 0;
+                const maxConcurrent = 6;
+                let index = 0;
+                const workers = new Array(maxConcurrent).fill(0).map(async () => {
+                    while (index < segmentUrls.length) {
+                        const myIndex = index++;
+                        try {
+                            totalBytes += await headSingle(segmentUrls[myIndex]);
+                        } catch {
+                            // ignore
+                        }
+                    }
+                });
+                await Promise.all(workers);
+                if (totalBytes > 0) {
+                    res.setHeader('Content-Length', String(totalBytes));
+                }
+            } catch (e) {
+                // Could not compute length; continue without it
+            }
+
+            // Encourage browser to finalize the download once stream ends
+            res.setHeader('Connection', 'close');
+
+            // Step 3: Stream each segment sequentially
+            for (let i = 0; i < segmentUrls.length; i++) {
+                const segUrl = segmentUrls[i];
+                try {
+                    const segResp = await axios.get(segUrl, { headers: baseHeaders, responseType: 'stream', timeout: 60000 });
+                    await new Promise((resolve, reject) => {
+                        segResp.data.on('error', reject);
+                        segResp.data.on('end', resolve);
+                        segResp.data.pipe(res, { end: false });
+                    });
+                } catch (segErr) {
+                    console.error('Segment fetch error:', segErr.message);
+                    throw segErr;
+                }
+            }
+
+            // End the response after all segments
+            res.end();
+            return;
         }
-        
+
+        // Non-HLS: progressive download of a single file
+        // Determine content type based on file extension
+        let contentType = 'video/mp4';
+        if (fileExtension === '.webm') {
+            contentType = 'video/webm';
+        } else if (fileExtension === '.mkv') {
+            contentType = 'video/x-matroska';
+        } else if (fileExtension === '.flv') {
+            contentType = 'video/x-flv';
+        }
+
         // Set download headers
-        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Type', contentType);
         res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
-        
+
+        console.log('Downloading video from URL:', url.substring(0, 100) + '...');
+
+        const headers = { ...baseHeaders, 'Range': 'bytes=0-' };
+
         // Create a direct proxy to the video
-        const videoRequest = await axios({
-            method: 'get',
-            url: url,
-            responseType: 'stream',
-            headers: headers,
-            timeout: 30000, // Longer timeout for video download
-            maxRedirects: 5
+        const videoRequest = await axios({ 
+            method: 'get', 
+            url: url, 
+            responseType: 'stream', 
+            headers: headers, 
+            timeout: 120000, 
+            maxRedirects: 5, 
+            decompress: true, 
+            validateStatus: function (status) {
+                return status >= 200 && status < 400; 
+            }
         });
-        
+
         // Copy response headers that might be useful
-        const headersToForward = ['content-length', 'content-type', 'accept-ranges', 'cache-control'];
+        const headersToForward = ['content-length', 'content-type', 'accept-ranges', 'cache-control', 'content-encoding'];
         headersToForward.forEach(header => {
             if (videoRequest.headers[header]) {
                 res.setHeader(header.replace(/^\w/, c => c.toUpperCase()), videoRequest.headers[header]);
             }
         });
-        
-        // Handle client disconnection
+
+        let downloadedBytes = 0;
+        const contentLength = videoRequest.headers['content-length'] ? parseInt(videoRequest.headers['content-length']) : 'unknown';
+        console.log(`Starting download of ${contentLength} bytes`);
+
         req.on('close', () => {
+            console.log(`Client closed connection. Aborting download after ${downloadedBytes} bytes`);
             if (videoRequest.data) {
                 videoRequest.data.destroy();
             }
         });
-        
-        // Pipe the video data to response
+
+        videoRequest.data.on('data', (chunk) => {
+            downloadedBytes += chunk.length;
+            if (downloadedBytes % (10 * 1024 * 1024) < chunk.length) {
+                console.log(`Download progress: ${(downloadedBytes / (1024 * 1024)).toFixed(2)}MB`);
+            }
+        });
+
+        videoRequest.data.on('error', (err) => {
+            console.error('Error during video download stream:', err.message);
+            if (!res.headersSent) {
+                res.status(500).send(`Download failed: ${err.message}`);
+            }
+            res.end();
+        });
+
+        videoRequest.data.on('end', () => {
+            console.log(`Video download completed successfully. Total bytes: ${downloadedBytes}`);
+        });
+
         videoRequest.data.pipe(res);
         
     } catch (error) {
         console.error('Download error:', error.message);
         if (!res.headersSent) {
-            res.status(500).send(`Download failed: ${error.message}`);
+            if (error.response) {
+                // The request was made and the server responded with a status code outside of 2xx
+                console.error('Error response status:', error.response.status);
+                console.error('Error response headers:', JSON.stringify(error.response.headers));
+                
+                // Handle specific status codes
+                if (error.response.status === 403) {
+                    res.status(403).send('Error: Access forbidden. The video source may require authentication or have geo-restrictions.');
+                } else if (error.response.status === 404) {
+                    res.status(404).send('Error: Video not found. The video may have been removed or the URL is incorrect.');
+                } else if (error.response.status === 429) {
+                    res.status(429).send('Error: Too many requests. Please try again later.');
+                } else {
+                    res.status(error.response.status).send(`Error: ${error.message}`);
+                }
+            } else if (error.request) {
+                // The request was made but no response was received
+                console.error('No response received from video source');
+                
+                if (error.code === 'ECONNABORTED') {
+                    res.status(504).send('Error: Connection timed out. The video server is taking too long to respond.');
+                } else if (error.code === 'ENOTFOUND') {
+                    res.status(502).send('Error: Could not resolve host. The video server domain may be incorrect.');
+                } else if (error.code === 'ECONNREFUSED') {
+                    res.status(502).send('Error: Connection refused. The video server is not accepting connections.');
+                } else {
+                    res.status(504).send('Error: No response from video source. Please try again later.');
+                }
+            } else if (error.code === 'ERR_BAD_REQUEST') {
+                res.status(400).send('Error: Bad request. The video URL may be malformed.');
+            } else if (error.code === 'ETIMEDOUT') {
+                res.status(504).send('Error: Connection timed out. Please try again later.');
+            } else {
+                // Something happened in setting up the request
+                res.status(500).send(`Error: ${error.message}. Please try again later.`);
+            }
+        } else {
+            // Headers already sent, just end the response
+            res.end();
         }
     }
 });

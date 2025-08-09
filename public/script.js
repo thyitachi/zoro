@@ -2210,17 +2210,56 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
       fullscreenBtn.innerHTML = isFullscreen ? exitFullscreenIcon : fullscreenIcon;
    }
    
+   // Keep all available sources for smart download selection
+   const availableSources = Array.isArray(sources) ? sources : [];
+
    // Current video URL and headers for download
    let currentVideoUrl = '';
    let currentVideoFilename = '';
    let currentHeaders = {};
    let isProxiedUrl = false;
+   let currentIsHls = false;
    
    downloadBtn.addEventListener('click', () => {
       if (currentVideoUrl) {
+         // Prefer a progressive MP4 when the currently playing source is HLS
+         let chosenUrl = currentVideoUrl;
+         let chosenHeaders = { ...(currentHeaders || {}) };
+         let chosenIsHls = currentIsHls;
+
+         if (currentVideoUrl.includes('.m3u8')) {
+            // Find highest non-HLS link among available sources
+            let bestCandidate = null;
+            availableSources.forEach(src => {
+               (src.links || []).forEach(link => {
+                  if (!link.hls) {
+                     const quality = parseInt(link.resolutionStr, 10) || 0;
+                     if (!bestCandidate || quality > bestCandidate.quality) {
+                        bestCandidate = {
+                           url: link.link,
+                           headers: link.headers || {},
+                           quality
+                        };
+                     }
+                  }
+               });
+            });
+            if (bestCandidate) {
+               chosenIsHls = false;
+               chosenHeaders = bestCandidate.headers || {};
+               // Use proxied URL to preserve referer
+               chosenUrl = `/proxy?url=${encodeURIComponent(bestCandidate.url)}${bestCandidate.headers && bestCandidate.headers.Referer ? `&referer=${encodeURIComponent(bestCandidate.headers.Referer)}` : ''}`;
+            }
+         }
+
          // Get the filename from the data attribute or use the currentVideoFilename
          const filename = downloadBtn.getAttribute('data-filename') || currentVideoFilename || '1P_0.mp4';
          console.log('Download button clicked with filename:', filename);
+         
+         // Show download status to user
+         const originalText = downloadBtn.innerHTML;
+         downloadBtn.innerHTML = '<span class="spinner"></span> Starting download...';
+         downloadBtn.disabled = true;
          
          // Create a form to submit the download request
          const form = document.createElement('form');
@@ -2228,19 +2267,19 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
          form.action = '/api/download-video';
          form.target = '_blank';
          
-         // Add URL parameter
+         // Add URL parameter - use the chosen URL
          const urlInput = document.createElement('input');
          urlInput.type = 'hidden';
          urlInput.name = 'url';
-         urlInput.value = currentVideoUrl;
+         urlInput.value = chosenUrl;
          form.appendChild(urlInput);
          
-         // Add referer if available
-         if (currentHeaders && currentHeaders.Referer) {
+         // Add referer - important for some video sources
+         if (chosenHeaders && chosenHeaders.Referer) {
             const refererInput = document.createElement('input');
             refererInput.type = 'hidden';
             refererInput.name = 'referer';
-            refererInput.value = currentHeaders.Referer;
+            refererInput.value = chosenHeaders.Referer;
             form.appendChild(refererInput);
          }
          
@@ -2251,10 +2290,18 @@ function initCustomPlayer(sources, showId, episodeNumber, showMeta, preferredSou
          filenameInput.value = filename;
          form.appendChild(filenameInput);
          
+         console.log('Submitting download form with URL:', chosenUrl);
+         
          // Submit the form
          document.body.appendChild(form);
          form.submit();
          document.body.removeChild(form);
+         
+         // Reset button after a short delay
+         setTimeout(() => {
+            downloadBtn.innerHTML = originalText;
+            downloadBtn.disabled = false;
+         }, 3000);
       } else {
          alert('No downloadable video source available');
       }
@@ -2392,8 +2439,18 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 	setPreferredSource(sourceName);
 	
 	// Set current video URL and headers for download button
-	currentVideoUrl = linkInfo.link;
+	// Create the proxied URL for download to ensure it works properly
+	let proxiedUrl = `/proxy?url=${encodeURIComponent(linkInfo.link)}`;
+	if (linkInfo.headers && linkInfo.headers.Referer) {
+		proxiedUrl += `&referer=${encodeURIComponent(linkInfo.headers.Referer)}`;
+	}
+	// Store the direct link and proxied URL
+	currentVideoUrl = proxiedUrl;
 	currentHeaders = linkInfo.headers || {};
+	// Log the URLs for debugging
+	console.log('Setting video URLs for download:');
+	console.log('- Original URL:', linkInfo.link);
+	console.log('- Proxied URL:', proxiedUrl);
 	
 	// Get anime name and episode number
 	const animeName = document.querySelector('#player-page .show-header h2')?.textContent?.trim() || 'Anime';
@@ -2410,15 +2467,15 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 		safeAnimeName = '1P'; // Default name if extraction failed
 	}
 	
-	// Create the filename
-	currentVideoFilename = `${safeAnimeName}_${episodeNumber}.mp4`;
+    // Create the filename
+    currentVideoFilename = `${safeAnimeName}_${episodeNumber}.mp4`;
 	console.log('Setting filename for download:', currentVideoFilename);
 	
-	// Force update the download button with this filename
-	const downloadBtn = document.getElementById('downloadBtn');
-	if (downloadBtn) {
-		downloadBtn.setAttribute('data-filename', currentVideoFilename);
-	}
+    // Force update the download button with this filename
+    const dlBtnEl = document.getElementById('download-btn');
+    if (dlBtnEl) {
+        dlBtnEl.setAttribute('data-filename', currentVideoFilename);
+    }
 
 	skipIntervals = [];
 	skippedInThisSession.clear();
@@ -2482,13 +2539,15 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 		ccOptionsContainer.appendChild(disabledButton);
 	}
 
-	if (linkInfo.hls && Hls.isSupported()) {
+    if (linkInfo.hls && Hls.isSupported()) {
 		let proxiedUrl = `/proxy?url=${encodeURIComponent(linkInfo.link)}`;
 		if (linkInfo.headers && linkInfo.headers.Referer) {
 			proxiedUrl += `&referer=${encodeURIComponent(linkInfo.headers.Referer)}`;
 		}
-		// Set proxied URL flag for download button
-		isProxiedUrl = false;
+        // Set proxied URL flag for download button
+        isProxiedUrl = true;
+        currentVideoUrl = proxiedUrl;
+        currentIsHls = true;
 		const hls = new Hls();
 		hls.loadSource(proxiedUrl);
 		hls.attachMedia(videoElement);
@@ -2499,13 +2558,15 @@ function playVideo(sourceName, linkInfo, subtitleInfo) {
 			}
 		});
 		currentHlsInstance = hls;
-	} else {
+    } else {
 		let proxiedUrl = `/proxy?url=${encodeURIComponent(linkInfo.link)}`;
 		if (linkInfo.headers && linkInfo.headers.Referer) {
 			proxiedUrl += `&referer=${encodeURIComponent(linkInfo.headers.Referer)}`;
 		}
-		// Set proxied URL flag for download button
-		isProxiedUrl = false;
+        // Set proxied URL flag for download button
+        isProxiedUrl = true;
+        currentVideoUrl = proxiedUrl;
+        currentIsHls = false;
 		videoElement.src = proxiedUrl;
 	}
 	
